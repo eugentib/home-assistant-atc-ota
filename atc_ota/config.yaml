@@ -1,5 +1,5 @@
 name: "ATC OTA over ESPHome"
-version: "0.1.1"
+version: "0.1.2"
 slug: "atc_ota"
 description: "Update pvvx/ATC Telink thermometer firmware through an ESPHome Bluetooth Proxy"
 url: "https://github.com/eugentib/home-assistant-atc-ota"

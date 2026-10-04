@@ -48,7 +48,7 @@ def test_finish_packet() -> None:
 
 
 def test_ble_candidate_detection_by_service_data_uuid():
-    from atc_ota.app.discovery import classify_atc
+    from app.discovery import classify_atc
 
     assert classify_atc("", service_data_uuids=["0000181a-0000-1000-8000-00805f9b34fb"])[0]
     assert classify_atc("", service_data_uuids=["0000fe95-0000-1000-8000-00805f9b34fb"])[0]
@@ -56,8 +56,31 @@ def test_ble_candidate_detection_by_service_data_uuid():
 
 
 def test_ble_candidate_detection_accepts_short_uuid():
-    from atc_ota.app.discovery import classify_atc
+    from app.discovery import classify_atc
 
     candidate, reason = classify_atc("", service_uuids=["181A"])
     assert candidate
     assert "181A" in reason
+
+
+def test_bcd_upstream_version():
+    from app.firmware_source import bcd_version
+
+    assert bcd_version(0x59) == "5.9"
+    assert bcd_version(0x60) == "6.0"
+
+
+def test_resolve_lywsd03mmc_stable_image():
+    from app.firmware_source import resolve_stable_firmware
+
+    custom = ["?"] * 50
+    for idx in (0, 3, 4, 5, 10, 14):
+        custom[idx] = "bin/ATC_v59.bin"
+    choice = resolve_stable_firmware(
+        {"version": 0x59, "custom": custom},
+        model="LYWSD03MMC",
+        hardware_revision="B1.4",
+    )
+    assert choice.version == "5.9"
+    assert choice.filename == "ATC_v59.bin"
+    assert choice.path == "bin/ATC_v59.bin"

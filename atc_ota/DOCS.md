@@ -17,17 +17,7 @@ bluetooth_proxy:
 
 ### `proxy_address`
 
-Address of the ESPHome proxy. Start with its IP address if `.local` name resolution does not work from the container. Example:
-
-```text
-192.168.1.45
-```
-
-or:
-
-```text
-btproxy1.local.
-```
+Address of the ESPHome proxy. Start with its IP address if `.local` name resolution does not work from the container. Example `192.168.1.45` or `btproxy1.local.`.
 
 ### `proxy_noise_psk`
 
@@ -46,19 +36,20 @@ Enable verbose logging.
 1. Start the app and open its Web UI.
 2. Wait for **Proxy connected**.
 3. Press **Scan BLE**.
-4. Select the thermometer or enter its MAC address manually.
-5. Choose a pvvx/ATC Telink `.bin` firmware file.
-6. Press **Start OTA**.
-7. Keep the target close to the selected Bluetooth Proxy until the operation finishes.
+4. Select a thermometer. The app connects to it and reads its standard Device Information fields, including device name, model, hardware revision and current pvvx software version.
+5. For LYWSD03MMC, the app also reads the official pvvx `firmware.json` catalog and shows the current latest stable version.
+6. Press **Update to stable ...** to download the official `.bin` directly from pvvx and OTA flash it through the ESPHome proxy.
+7. Manual `.bin` upload remains available as a fallback.
 
-The app validates the Telink firmware marker (`KNLT`) before transmitting.
+The downloaded/uploaded image is validated for the Telink firmware marker (`KNLT`) before transmitting.
 
 ## Important notes
 
-- This first release supports one explicitly configured ESPHome proxy.
+- Automatic upstream firmware selection is intentionally limited to LYWSD03MMC in v0.1.2. Other supported Telink devices can still use manual `.bin` upload.
+- The selected target is briefly connected twice during a one-click update: first to identify hardware/version, then again for OTA after the official firmware has been downloaded and validated.
 - The target firmware must use the classic Telink OTA service:
   - Service: `00010203-0405-0607-0809-0a0b0c0d1912`
   - Characteristic: `00010203-0405-0607-0809-0a0b0c0d2b12`
 - If scanning works but GATT connection fails, confirm that the proxy has `bluetooth_proxy.active: true` and at least one free BLE connection slot.
 - Do not interrupt power to the thermometer during OTA.
-- Version `0.1.0` is experimental. Test first on a recoverable device.
+- This project remains experimental. Test first on a recoverable device.

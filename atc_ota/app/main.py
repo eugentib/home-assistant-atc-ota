@@ -17,6 +17,8 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse
 
 from .bluetooth import BluetoothProxyBridge
+from .device_info import read_device_info
+from .firmware_source import download_firmware, get_latest_choice
 from .ota import flash_telink
 from .protocol import validate_firmware
 from .web import INDEX_HTML
@@ -107,7 +109,7 @@ async def lifespan(_: FastAPI):
         await runtime.stop()
 
 
-app = FastAPI(title="ATC OTA over ESPHome", version="0.1.1", lifespan=lifespan)
+app = FastAPI(title="ATC OTA over ESPHome", version="0.1.2", lifespan=lifespan)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -149,6 +151,68 @@ async def scan() -> dict[str, Any]:
         logging.exception("BLE scan failed")
         raise HTTPException(status_code=503, detail=f"{type(exc).__name__}: {exc}") from exc
     return {"devices": devices}
+
+
+@app.post("/api/device-info")
+async def device_info(address: str = Form(...)) -> dict[str, Any]:
+    address = address.strip()
+    if not address:
+        raise HTTPException(status_code=400, detail="BLE address is required")
+    if runtime.bridge is None or not runtime.bridge.state.connected:
+        raise HTTPException(status_code=503, detail="ESPHome Bluetooth Proxy is not connected")
+    try:
+        info = await read_device_info(address)
+        try:
+            choice = await get_latest_choice(
+                model=info.get("model"),
+                hardware_revision=info.get("hardware_revision"),
+            )
+        except Exception as exc:  # noqa: BLE001 - upstream/model support is optional
+            info["latest"] = None
+            info["latest_error"] = f"{type(exc).__name__}: {exc}"
+        else:
+            info["latest"] = {
+                "version": choice.version,
+                "path": choice.path,
+                "filename": choice.filename,
+            }
+            info["latest_error"] = None
+        return info
+    except Exception as exc:  # noqa: BLE001 - convert BLE errors to API detail
+        logging.exception("Unable to read BLE device information for %s", address)
+        raise HTTPException(status_code=503, detail=f"{type(exc).__name__}: {exc}") from exc
+
+
+@app.post("/api/ota/latest")
+async def start_latest_ota(address: str = Form(...)) -> dict[str, str]:
+    address = address.strip()
+    if not address:
+        raise HTTPException(status_code=400, detail="BLE address is required")
+    if runtime.bridge is None or not runtime.bridge.state.connected:
+        raise HTTPException(status_code=503, detail="ESPHome Bluetooth Proxy is not connected")
+
+    try:
+        info = await read_device_info(address)
+        choice = await get_latest_choice(
+            model=info.get("model"),
+            hardware_revision=info.get("hardware_revision"),
+        )
+        data = await download_firmware(choice)
+    except Exception as exc:  # noqa: BLE001 - report upstream/BLE errors to the UI
+        logging.exception("Unable to prepare latest firmware OTA for %s", address)
+        raise HTTPException(status_code=503, detail=f"{type(exc).__name__}: {exc}") from exc
+
+    job_id = uuid.uuid4().hex
+    job = Job(
+        id=job_id,
+        address=address,
+        filename=choice.filename,
+    )
+    current = info.get("current_version") or "unknown"
+    job.add(0, f"Downloaded pvvx stable {choice.version} ({choice.filename}); current: {current}")
+    runtime.jobs[job_id] = job
+    asyncio.create_task(_run_ota_job(job, data))
+    return {"job_id": job_id}
 
 
 @app.post("/api/ota")

@@ -34,3 +34,7 @@ This project interoperates with:
 - ESPHome Bluetooth Proxy
 
 No upstream firmware binaries are bundled in this repository.
+
+## v0.1.2
+
+After scanning, select a thermometer to read its BLE Device Information (configured name, model, HW and current pvvx software version). For LYWSD03MMC the app queries the official pvvx `firmware.json`, shows the latest stable version, and can download/flash that image directly through the configured ESPHome Bluetooth Proxy. Manual `.bin` upload is still available.
