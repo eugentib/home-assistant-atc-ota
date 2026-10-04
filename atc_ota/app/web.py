@@ -9,7 +9,7 @@ INDEX_HTML = r'''<!doctype html>
   <style>
     :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
     body { margin: 0; padding: 20px; background: var(--ha-card-background, #111); color: var(--primary-text-color, #eee); }
-    .wrap { max-width: 1180px; margin: 0 auto; }
+    .wrap { max-width: 1240px; margin: 0 auto; }
     .card { border: 1px solid #6666; border-radius: 12px; padding: 16px; margin-bottom: 16px; background: #80808010; }
     h1 { margin-top: 0; font-size: 1.5rem; }
     h2 { font-size: 1.1rem; margin-top: 0; }
@@ -18,7 +18,11 @@ INDEX_HTML = r'''<!doctype html>
     input[type=text], input[type=file] { width: 100%; box-sizing: border-box; padding: 8px; margin: 6px 0 10px; }
     .ok { color: #43a047; }
     .bad { color: #e53935; }
+    .warn { color: #f9a825; }
     .muted { opacity: .72; }
+    .pill { display:inline-block; padding:2px 7px; border-radius:999px; font-size:.82rem; border:1px solid #6666; }
+    .pill.update { color:#f9a825; border-color:#f9a82588; }
+    .pill.current { color:#43a047; border-color:#43a04788; }
     table { width: 100%; border-collapse: collapse; }
     th, td { text-align: left; padding: 8px; border-bottom: 1px solid #6664; white-space: nowrap; }
     tr.candidate td { font-weight: 600; }
@@ -30,6 +34,7 @@ INDEX_HTML = r'''<!doctype html>
     .info-grid { display:grid; grid-template-columns:max-content 1fr; gap:6px 14px; margin:10px 0 14px; }
     .info-grid .label { opacity:.7; }
     .separator { margin:18px 0; border:0; border-top:1px solid #6664; }
+    .inventory-detail { margin-top:12px; }
   </style>
 </head>
 <body>
@@ -39,6 +44,7 @@ INDEX_HTML = r'''<!doctype html>
   <div class="card">
     <h2>ESPHome Bluetooth Proxy</h2>
     <div id="proxyStatus">Loading…</div>
+    <div id="haStatus" class="muted" style="margin-top:6px">Home Assistant publishing: loading…</div>
   </div>
 
   <div class="card">
@@ -46,13 +52,19 @@ INDEX_HTML = r'''<!doctype html>
       <h2 class="grow">BLE devices</h2>
       <label><input type="checkbox" id="showAll"> Show all</label>
       <button id="scanBtn">Scan BLE</button>
+      <button id="inventoryBtn">Read all candidates</button>
     </div>
-    <div id="scanInfo" class="muted">No scan yet.</div>
+    <div id="scanInfo" class="muted">Loading saved inventory…</div>
     <div style="overflow:auto">
       <table>
-        <thead><tr><th></th><th>Name</th><th>Model</th><th>Address</th><th>RSSI</th><th>HW</th><th>Current</th><th>Latest</th><th>Detected by</th></tr></thead>
+        <thead><tr><th></th><th>Name</th><th>Model</th><th>Address</th><th>RSSI</th><th>HW</th><th>Current</th><th>Latest</th><th>Update</th><th>Detected by</th></tr></thead>
         <tbody id="deviceRows"></tbody>
       </table>
+    </div>
+    <div class="inventory-detail">
+      <progress id="inventoryProgress" max="100" value="0"></progress>
+      <div id="inventoryState" class="muted">Inventory idle</div>
+      <pre id="inventoryLog" style="display:none"></pre>
     </div>
   </div>
 
@@ -61,7 +73,7 @@ INDEX_HTML = r'''<!doctype html>
     <label>Target BLE address</label>
     <input id="target" type="text" placeholder="A4:C1:38:xx:xx:xx">
 
-    <div id="deviceInfo" class="muted">Select a thermometer. The app will connect to it and read its GAP/Device Information characteristics.</div>
+    <div id="deviceInfo" class="muted">Select a thermometer. Cached inventory is shown immediately; selecting also refreshes its GATT information.</div>
 
     <div class="row">
       <button id="latestBtn" disabled>Update to latest stable pvvx</button>
@@ -92,18 +104,8 @@ let devices = [];
 let selectedAddress = '';
 let selectedInfo = null;
 let pollTimer = null;
+let inventoryPollTimer = null;
 let infoRequestSerial = 0;
-
-async function refreshStatus() {
-  try {
-    const r = await fetch(apiUrl('api/status'));
-    const s = await r.json();
-    const cls = s.proxy.connected ? 'ok' : (s.proxy.status === 'error' ? 'bad' : 'muted');
-    byId('proxyStatus').innerHTML = `<span class="${cls}"><b>${escapeHtml(s.proxy.status)}</b></span> — ${escapeHtml(s.proxy.address)}${s.proxy.error ? '<br><span class="bad">'+escapeHtml(s.proxy.error)+'</span>' : ''}`;
-  } catch (e) {
-    byId('proxyStatus').innerHTML = `<span class="bad">${escapeHtml(String(e))}</span>`;
-  }
-}
 
 function escapeHtml(v) {
   return String(v ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
@@ -113,23 +115,120 @@ function shortVersion(v) {
   return String(v || '').trim().replace(/^V/i, '');
 }
 
+function mergeDevices(incoming) {
+  const map = new Map(devices.map(d => [String(d.address || '').toUpperCase(), d]));
+  for (const item of incoming || []) {
+    const key = String(item.address || '').toUpperCase();
+    if (!key) continue;
+    map.set(key, {...(map.get(key) || {}), ...item});
+  }
+  devices = [...map.values()];
+  devices.sort((a,b) => {
+    if (!!a.update_available !== !!b.update_available) return a.update_available ? -1 : 1;
+    const ar = Number.isFinite(a.rssi) ? a.rssi : -999;
+    const br = Number.isFinite(b.rssi) ? b.rssi : -999;
+    return br - ar;
+  });
+}
+
+async function refreshStatus() {
+  try {
+    const r = await fetch(apiUrl('api/status'));
+    const s = await r.json();
+    const cls = s.proxy.connected ? 'ok' : (s.proxy.status === 'error' ? 'bad' : 'muted');
+    byId('proxyStatus').innerHTML = `<span class="${cls}"><b>${escapeHtml(s.proxy.status)}</b></span> — ${escapeHtml(s.proxy.address)}${s.proxy.error ? '<br><span class="bad">'+escapeHtml(s.proxy.error)+'</span>' : ''}`;
+    const ha = s.home_assistant || {};
+    if (!ha.publishing_enabled) {
+      byId('haStatus').textContent = 'Home Assistant entities: disabled in app configuration';
+    } else if (ha.api_available) {
+      byId('haStatus').innerHTML = `<span class="ok">Home Assistant entities enabled</span>${ha.last_error ? ' — <span class="warn">'+escapeHtml(ha.last_error)+'</span>' : ''}`;
+    } else {
+      byId('haStatus').innerHTML = '<span class="bad">Home Assistant API token unavailable</span>';
+    }
+  } catch (e) {
+    byId('proxyStatus').innerHTML = `<span class="bad">${escapeHtml(String(e))}</span>`;
+  }
+}
+
 function renderDevices() {
   const showAll = byId('showAll').checked;
-  const visible = devices.filter(d => showAll || d.candidate);
-  const rows = visible.map(d => `
+  const visible = devices.filter(d => showAll || d.candidate || d.model);
+  const rows = visible.map(d => {
+    const flag = d.update_available;
+    const update = flag === true
+      ? '<span class="pill update">available</span>'
+      : flag === false
+        ? '<span class="pill current">current</span>'
+        : '<span class="muted">—</span>';
+    return `
     <tr class="${d.candidate ? 'candidate' : ''} ${d.address === selectedAddress ? 'selected' : ''}">
       <td><input type="radio" name="device" data-address="${escapeHtml(d.address)}" ${d.address === selectedAddress ? 'checked' : ''}></td>
-      <td>${escapeHtml(d.device_name || d.name)}</td>
+      <td>${escapeHtml(d.device_name || d.advertised_name || d.name || '(unnamed)')}</td>
       <td>${escapeHtml(d.model || '')}</td>
       <td>${escapeHtml(d.address)}</td>
       <td>${d.rssi ?? ''}</td>
       <td>${escapeHtml(d.hardware_revision || '')}</td>
       <td>${escapeHtml(d.current_version || '')}</td>
       <td>${escapeHtml(d.latest?.version || '')}</td>
+      <td>${update}</td>
       <td>${escapeHtml(d.candidate_reason || '')}</td>
-    </tr>`).join('');
-  byId('deviceRows').innerHTML = rows || '<tr><td colspan="9" class="muted">No matching devices. Enable “Show all” to inspect every BLE advertisement.</td></tr>';
+    </tr>`;
+  }).join('');
+  byId('deviceRows').innerHTML = rows || '<tr><td colspan="10" class="muted">No matching devices. Enable “Show all” to inspect every BLE advertisement.</td></tr>';
   document.querySelectorAll('input[name=device]').forEach(r => r.addEventListener('change', ev => selectDevice(ev.target.dataset.address)));
+}
+
+function renderSelectedInfo(info) {
+  const latest = info?.latest;
+  byId('deviceInfo').innerHTML = `<div class="info-grid">
+    <div class="label">Device name</div><div>${escapeHtml(info.device_name || info.advertised_name || '(unnamed)')}</div>
+    <div class="label">Model</div><div>${escapeHtml(info.model || '')}</div>
+    <div class="label">Hardware</div><div>${escapeHtml(info.hardware_revision || '')}</div>
+    <div class="label">Software</div><div>${escapeHtml(info.software_revision || info.current_version || '')}</div>
+    <div class="label">Firmware ID</div><div>${escapeHtml(info.firmware_revision || '')}</div>
+    <div class="label">Manufacturer</div><div>${escapeHtml(info.manufacturer || '')}</div>
+  </div>`;
+  if (latest) {
+    const current = shortVersion(info.current_version);
+    const newest = shortVersion(latest.version);
+    const isUpdate = info.update_available === true || (current && newest && current !== newest);
+    byId('latestBtn').disabled = false;
+    byId('latestBtn').textContent = isUpdate ? `Update to stable ${latest.version}` : `Reinstall stable ${latest.version}`;
+    byId('latestHint').textContent = latest.filename || latest.path || '';
+  } else {
+    byId('latestBtn').disabled = true;
+    byId('latestBtn').textContent = 'Update to latest stable pvvx';
+    byId('latestHint').innerHTML = info.latest_error ? `<span class="bad">Automatic firmware unavailable:</span> ${escapeHtml(info.latest_error)}` : 'Automatic firmware unavailable for this device.';
+  }
+}
+
+async function loadInventory(updateMessage=true) {
+  try {
+    const r = await fetch(apiUrl('api/inventory'));
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || JSON.stringify(data));
+    mergeDevices(data.devices || []);
+    renderDevices();
+    renderInventoryJob(data.job || {});
+    if (updateMessage) {
+      const known = (data.devices || []).filter(d => d.candidate || d.model).length;
+      byId('scanInfo').textContent = `Saved inventory: ${known} thermometer(s); ${data.updates_available || 0} update(s) available.`;
+    }
+  } catch(e) {
+    if (updateMessage) byId('scanInfo').innerHTML = `<span class="bad">${escapeHtml(String(e))}</span>`;
+  }
+}
+
+function renderInventoryJob(job) {
+  byId('inventoryProgress').value = job.progress || 0;
+  byId('inventoryState').textContent = `${job.state || 'idle'}: ${job.message || 'Idle'}`;
+  const log = job.log || [];
+  byId('inventoryLog').style.display = log.length ? 'block' : 'none';
+  byId('inventoryLog').textContent = log.join('\n');
+  byId('inventoryLog').scrollTop = byId('inventoryLog').scrollHeight;
+  const running = job.state === 'running';
+  byId('inventoryBtn').disabled = running;
+  return running;
 }
 
 async function selectDevice(address) {
@@ -138,13 +237,13 @@ async function selectDevice(address) {
   byId('target').value = address;
   byId('latestBtn').disabled = true;
   byId('latestBtn').textContent = 'Update to latest stable pvvx';
-  byId('latestHint').textContent = 'Reading device information…';
-  byId('deviceInfo').textContent = 'Connecting over the ESPHome proxy and reading device information…';
-  renderDevices();
-  await loadDeviceInfo(address);
-}
 
-async function loadDeviceInfo(address) {
+  const cached = devices.find(d => String(d.address).toUpperCase() === String(address).toUpperCase());
+  if (cached?.current_version) renderSelectedInfo(cached);
+  else byId('deviceInfo').textContent = 'Reading device information…';
+  byId('latestHint').textContent = 'Refreshing through GATT…';
+  renderDevices();
+
   const serial = ++infoRequestSerial;
   const form = new FormData();
   form.append('address', address);
@@ -154,34 +253,17 @@ async function loadDeviceInfo(address) {
     if (!r.ok) throw new Error(info.detail || JSON.stringify(info));
     if (serial !== infoRequestSerial || address !== selectedAddress) return;
     selectedInfo = info;
-    const d = devices.find(x => x.address === address);
-    if (d) Object.assign(d, info);
+    mergeDevices([info]);
     renderDevices();
-
-    byId('deviceInfo').innerHTML = `
-      <div class="info-grid">
-        <div class="label">Device name</div><div>${escapeHtml(info.device_name || '(unknown)')}</div>
-        <div class="label">Model</div><div>${escapeHtml(info.model || '(unknown)')}</div>
-        <div class="label">Hardware</div><div>${escapeHtml(info.hardware_revision || '(unknown)')}</div>
-        <div class="label">Software</div><div>${escapeHtml(info.software_revision || '(unknown)')}</div>
-        <div class="label">Firmware ID</div><div>${escapeHtml(info.firmware_revision || '(unknown)')}</div>
-        <div class="label">Manufacturer</div><div>${escapeHtml(info.manufacturer || '(unknown)')}</div>
-      </div>`;
-
-    if (info.latest) {
-      const same = shortVersion(info.current_version) === shortVersion(info.latest.version);
-      byId('latestBtn').disabled = false;
-      byId('latestBtn').textContent = same ? `Reinstall stable ${info.latest.version}` : `Update to stable ${info.latest.version}`;
-      byId('latestHint').innerHTML = `${same ? '<span class="ok">Already on latest stable.</span> ' : ''}${escapeHtml(info.latest.filename)}`;
-    } else {
-      byId('latestBtn').disabled = true;
-      byId('latestHint').innerHTML = `<span class="bad">Automatic firmware unavailable:</span> ${escapeHtml(info.latest_error || 'unknown reason')}`;
-    }
+    renderSelectedInfo(info);
   } catch (e) {
     if (serial !== infoRequestSerial || address !== selectedAddress) return;
-    byId('deviceInfo').innerHTML = `<span class="bad">Unable to read device information: ${escapeHtml(String(e))}</span>`;
-    byId('latestHint').textContent = 'Manual .bin OTA is still available.';
-    byId('latestBtn').disabled = true;
+    byId('deviceInfo').innerHTML = `<span class="bad">Unable to refresh device information: ${escapeHtml(String(e))}</span>`;
+    byId('latestHint').textContent = cached?.latest ? 'Cached firmware information remains available.' : 'Manual .bin OTA is still available.';
+    if (cached?.latest) {
+      selectedInfo = cached;
+      renderSelectedInfo(cached);
+    }
   }
 }
 
@@ -190,13 +272,14 @@ byId('showAll').addEventListener('change', renderDevices);
 byId('scanBtn').addEventListener('click', async () => {
   const btn = byId('scanBtn');
   btn.disabled = true;
-  byId('scanInfo').textContent = 'Scanning…';
+  byId('scanInfo').textContent = 'Passive BLE scan…';
   try {
     const r = await fetch(apiUrl('api/scan'), {method:'POST'});
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || JSON.stringify(data));
-    devices = data.devices;
-    byId('scanInfo').textContent = `Found ${devices.length} devices; ${devices.filter(d => d.candidate).length} look like ATC/Xiaomi thermometer candidates. Select one to read its name and firmware version.`;
+    mergeDevices(data.devices || []);
+    const candidates = (data.devices || []).filter(d => d.candidate).length;
+    byId('scanInfo').textContent = `Found ${(data.devices || []).length} devices; ${candidates} look like ATC/Xiaomi thermometer candidates. “Read all candidates” will connect to each one and save its metadata.`;
     renderDevices();
   } catch (e) {
     byId('scanInfo').innerHTML = `<span class="bad">${escapeHtml(String(e))}</span>`;
@@ -204,6 +287,45 @@ byId('scanBtn').addEventListener('click', async () => {
     btn.disabled = false;
   }
 });
+
+byId('inventoryBtn').addEventListener('click', async () => {
+  if (!confirm('Scan and connect to every thermometer candidate sequentially? Weak devices may take several minutes.')) return;
+  byId('inventoryBtn').disabled = true;
+  try {
+    const r = await fetch(apiUrl('api/inventory/refresh'), {method:'POST'});
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || JSON.stringify(data));
+    startInventoryPolling();
+  } catch(e) {
+    byId('inventoryState').innerHTML = `<span class="bad">${escapeHtml(String(e))}</span>`;
+    byId('inventoryBtn').disabled = false;
+  }
+});
+
+function startInventoryPolling() {
+  if (inventoryPollTimer) clearInterval(inventoryPollTimer);
+  const poll = async () => {
+    try {
+      const r = await fetch(apiUrl('api/inventory'));
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.detail || JSON.stringify(data));
+      mergeDevices(data.devices || []);
+      renderDevices();
+      const running = renderInventoryJob(data.job || {});
+      byId('scanInfo').textContent = `Saved inventory: ${(data.devices || []).filter(d => d.candidate || d.model).length} thermometer(s); ${data.updates_available || 0} update(s) available.`;
+      if (!running) {
+        clearInterval(inventoryPollTimer); inventoryPollTimer = null;
+        byId('inventoryBtn').disabled = false;
+      }
+    } catch(e) {
+      clearInterval(inventoryPollTimer); inventoryPollTimer = null;
+      byId('inventoryState').innerHTML = `<span class="bad">${escapeHtml(String(e))}</span>`;
+      byId('inventoryBtn').disabled = false;
+    }
+  };
+  poll();
+  inventoryPollTimer = setInterval(poll, 1000);
+}
 
 byId('target').addEventListener('change', async () => {
   const address = byId('target').value.trim();
@@ -277,7 +399,12 @@ function startPolling(jobId) {
         clearInterval(pollTimer); pollTimer = null;
         byId('flashBtn').disabled = false;
         byId('latestBtn').disabled = !selectedInfo?.latest;
-        if (j.state === 'done' && selectedAddress) setTimeout(() => loadDeviceInfo(selectedAddress), 2500);
+        if (j.state === 'done') {
+          setTimeout(() => {
+            loadInventory(false);
+            if (selectedAddress) selectDevice(selectedAddress);
+          }, 5000);
+        }
       }
     } catch(e) {
       clearInterval(pollTimer); pollTimer = null;
@@ -291,6 +418,7 @@ function startPolling(jobId) {
 }
 
 refreshStatus();
+loadInventory();
 setInterval(refreshStatus, 5000);
 </script>
 </body>

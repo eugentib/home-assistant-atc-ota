@@ -1,19 +1,24 @@
 # ATC OTA over ESPHome
 
-Experimental Home Assistant app/add-on for updating pvvx/ATC Telink thermometer firmware through an ESPHome Bluetooth Proxy.
+Experimental Home Assistant app/add-on for inventorying and updating pvvx/ATC Telink thermometers through an ESPHome Bluetooth Proxy.
 
-The first release intentionally keeps the architecture simple:
+Current features:
 
 - one ESPHome Bluetooth Proxy configured by address/IP;
 - optional ESPHome Native API encryption key;
-- BLE scan through `bleak-esphome`;
-- manual upload of a Telink `.bin` firmware file;
-- OTA using the pvvx Telink OTA service and packet format;
+- passive BLE scan through `bleak-esphome`;
+- persistent thermometer inventory with active GATT identification;
+- current firmware and hardware revision detection;
+- pvvx stable firmware lookup and update-available detection;
+- Home Assistant state sensors for current firmware and available updates;
+- one-click official pvvx firmware download for LYWSD03MMC;
+- manual Telink `.bin` upload fallback;
+- pvvx-compatible Telink OTA;
 - Home Assistant Ingress web UI with progress and logs.
 
 ## Install from GitHub
 
-After this repository is pushed to GitHub, add the repository URL to the Home Assistant Apps/Add-ons store:
+Add this repository URL to the Home Assistant Apps/Add-ons store:
 
 `https://github.com/eugentib/home-assistant-atc-ota`
 
@@ -21,9 +26,19 @@ Then install **ATC OTA over ESPHome**.
 
 See `atc_ota/DOCS.md` for configuration and usage.
 
+## Home Assistant inventory entities
+
+Version `0.1.3` can publish:
+
+- one firmware sensor per cached thermometer;
+- one update-available binary sensor per cached thermometer;
+- a summary sensor with the number and list of updatable thermometers.
+
+The inventory itself is persisted in the app data directory and is republished after app startup and periodically thereafter.
+
 ## Status
 
-Version `0.1.0` is experimental. Use it first on a thermometer that you can recover by SWire if necessary.
+Version `0.1.3` remains experimental. Use it first on a thermometer that you can recover by SWire if necessary.
 
 ## Upstream projects
 
@@ -34,7 +49,3 @@ This project interoperates with:
 - ESPHome Bluetooth Proxy
 
 No upstream firmware binaries are bundled in this repository.
-
-## v0.1.2
-
-After scanning, select a thermometer to read its BLE Device Information (configured name, model, HW and current pvvx software version). For LYWSD03MMC the app queries the official pvvx `firmware.json`, shows the latest stable version, and can download/flash that image directly through the configured ESPHome Bluetooth Proxy. Manual `.bin` upload is still available.
