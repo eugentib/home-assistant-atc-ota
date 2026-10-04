@@ -31,11 +31,11 @@ See `atc_ota/DOCS.md` for configuration and usage.
 
 ## Automatic Bluetooth Proxy discovery
 
-Version `0.1.6` can use the ESPHome integrations already loaded in Home Assistant as its source of proxy configuration. It queries Home Assistant for ESPHome config entries and their API encryption keys, discovers the matching ESPHome Native API endpoints over mDNS, then probes `bluetooth_proxy_feature_flags` before enabling a node.
+Version `0.1.7` can use the ESPHome integrations already loaded in Home Assistant as its source of proxy configuration. It queries Home Assistant for ESPHome config entries and their API encryption keys, discovers the matching ESPHome Native API endpoints over mDNS, then probes `bluetooth_proxy_feature_flags` before enabling a node.
 
 All compatible proxies with active BLE connections are registered at once. The manual `proxy_address` / `proxy_noise_psk` settings remain as a fallback if automatic discovery cannot find a usable proxy.
 
-Proxy discovery runs in the background, so the Ingress Web UI becomes available immediately after the app starts. The proxy table and status update automatically while discovery is still running.
+Proxy discovery runs in the background, so the Ingress Web UI becomes available immediately after the app starts. Version `0.1.7` also caches the last-known-good proxy set in `/data/proxies.json`; on later restarts those proxies are started first and the slower Home Assistant/DNS reconciliation happens in the background. The proxy table and status update automatically while discovery is still running.
 
 ## Home Assistant inventory entities
 
@@ -49,7 +49,7 @@ The inventory itself is persisted in the app data directory and is republished a
 
 ## Status
 
-Version `0.1.6` remains experimental. Use it first on a thermometer that you can recover by SWire if necessary.
+Version `0.1.7` remains experimental. Use it first on a thermometer that you can recover by SWire if necessary.
 
 ## Upstream projects
 

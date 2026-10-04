@@ -33,6 +33,7 @@ from .web import INDEX_HTML
 
 OPTIONS_FILE = Path(os.environ.get("ATC_OTA_OPTIONS", "/data/options.json"))
 INVENTORY_FILE = Path(os.environ.get("ATC_OTA_INVENTORY", "/data/devices.json"))
+PROXY_CACHE_FILE = Path(os.environ.get("ATC_OTA_PROXY_CACHE", "/data/proxies.json"))
 MAX_FIRMWARE_SIZE = 2 * 1024 * 1024
 
 
@@ -93,6 +94,7 @@ class Runtime:
         self.proxy_phase = "not-started"
         self.proxy_message = "Proxy discovery has not started"
         self.proxy_task: asyncio.Task[None] | None = None
+        self.active_proxy_configs: list[dict[str, Any]] = []
 
     @property
     def proxy_label(self) -> str:
@@ -137,8 +139,82 @@ class Runtime:
         self.proxy_task = asyncio.create_task(self._configure_proxies_background())
         return True
 
+    def _load_proxy_cache(self) -> list[dict[str, Any]]:
+        """Load last-known-good proxy configs so restarts do not wait for discovery."""
+        try:
+            raw = json.loads(PROXY_CACHE_FILE.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return []
+        except (OSError, json.JSONDecodeError):
+            logging.exception("Unable to read proxy cache %s", PROXY_CACHE_FILE)
+            return []
+        configs = raw.get("proxies") if isinstance(raw, dict) else raw
+        if not isinstance(configs, list):
+            return []
+        clean: list[dict[str, Any]] = []
+        for item in configs:
+            if not isinstance(item, dict):
+                continue
+            address = str(item.get("address") or "").strip()
+            if not address:
+                continue
+            clean.append({
+                "address": address,
+                "noise_psk": item.get("noise_psk") or None,
+                "name": str(item.get("name") or address),
+                "entry_id": str(item.get("entry_id") or ""),
+            })
+        return clean
+
+    def _save_proxy_cache(self, configs: list[dict[str, Any]]) -> None:
+        """Persist only the usable auto-discovered proxy configs, atomically."""
+        if not configs:
+            return
+        payload = {"version": 1, "saved_at": int(time.time()), "proxies": configs}
+        try:
+            PROXY_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            tmp = PROXY_CACHE_FILE.with_suffix(".tmp")
+            tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            try:
+                os.chmod(tmp, 0o600)
+            except OSError:
+                pass
+            tmp.replace(PROXY_CACHE_FILE)
+        except OSError:
+            logging.exception("Unable to write proxy cache %s", PROXY_CACHE_FILE)
+
+    @staticmethod
+    def _proxy_signature(configs: list[dict[str, Any]]) -> tuple[tuple[str, str, str], ...]:
+        return tuple(sorted(
+            (
+                str(item.get("entry_id") or ""),
+                str(item.get("address") or "").strip().lower().rstrip("."),
+                str(item.get("noise_psk") or ""),
+            )
+            for item in configs
+            if str(item.get("address") or "").strip()
+        ))
+
+    async def _activate_proxy_configs(self, configs: list[dict[str, Any]], *, mode: str) -> None:
+        """Replace the active bridge only when the effective proxy set changed."""
+        if self.bridge is not None and self._proxy_signature(configs) == self._proxy_signature(self.active_proxy_configs):
+            self.proxy_mode = mode
+            self.active_proxy_configs = list(configs)
+            return
+
+        old_bridge = self.bridge
+        self.bridge = None
+        if old_bridge is not None:
+            await old_bridge.stop()
+
+        bridge = BluetoothProxyBridge(configs, mode=mode)
+        await bridge.start()
+        self.bridge = bridge
+        self.active_proxy_configs = list(configs)
+        self.proxy_mode = mode
+
     async def configure_proxies(self) -> None:
-        """Discover compatible ESPHome proxies, with manual config as a fallback."""
+        """Discover compatible ESPHome proxies, using last-known-good cache immediately."""
         async with self.proxy_refresh_lock:
             self.proxy_phase = "discovering"
             self.proxy_message = "Querying Home Assistant and probing ESPHome nodes"
@@ -148,6 +224,28 @@ class Runtime:
             self.proxy_discovery = []
             self.proxy_discovery_error = None
 
+            # On restart, bring the last-known-good proxies online first.  This
+            # avoids making BLE unavailable while unrelated ESPHome entries time
+            # out during reconciliation.  Discovery still runs below in the
+            # background and replaces the cache if anything changed.
+            if auto and self.bridge is None:
+                cached = self._load_proxy_cache()
+                if cached:
+                    try:
+                        await self._activate_proxy_configs(cached, mode="automatic-cache")
+                        self.proxy_phase = "discovering"
+                        self.proxy_message = (
+                            f"Using {len(cached)} cached Bluetooth Proxy node(s); "
+                            "validating Home Assistant configuration in the background"
+                        )
+                        logging.info(
+                            "Started %d cached ESPHome Bluetooth Proxy node(s) before discovery: %s",
+                            len(cached),
+                            ", ".join(str(item.get("name") or item.get("address")) for item in cached),
+                        )
+                    except Exception:  # noqa: BLE001
+                        logging.exception("Unable to start cached ESPHome Bluetooth Proxy configuration")
+
             if auto:
                 discovered, discovery_error = await discover_home_assistant_proxies()
                 self.proxy_discovery = [item.public_dict() for item in discovered]
@@ -155,13 +253,24 @@ class Runtime:
                 configs = [item.manager_config() for item in discovered if item.usable]
                 if configs:
                     mode = "automatic"
+                    self._save_proxy_cache(configs)
                     logging.info(
                         "Automatically discovered %d usable ESPHome Bluetooth Proxy node(s): %s",
                         len(configs),
                         ", ".join(str(item.get("name") or item.get("address")) for item in configs),
                     )
 
-            if not configs:
+            if configs:
+                await self._activate_proxy_configs(configs, mode=mode)
+            elif self.bridge is not None and self.active_proxy_configs:
+                # A transient HA/DNS failure must not throw away working cached
+                # proxies.  Keep them and expose the discovery warning in the UI.
+                self.proxy_mode = "automatic-cache" if auto else self.proxy_mode
+                if auto:
+                    extra = self.proxy_discovery_error or "no usable proxies were confirmed"
+                    self.proxy_discovery_error = f"Discovery did not confirm a replacement; retaining cached proxies: {extra}"
+                    logging.warning(self.proxy_discovery_error)
+            else:
                 address = str(self.options.get("proxy_address", "")).strip()
                 noise_psk = str(self.options.get("proxy_noise_psk", "")).strip() or None
                 if not address:
@@ -186,20 +295,17 @@ class Runtime:
                         address,
                         f" ({self.proxy_discovery_error})" if self.proxy_discovery_error else "",
                     )
+                await self._activate_proxy_configs(configs, mode=mode)
 
-            old_bridge = self.bridge
-            self.bridge = None
-            if old_bridge is not None:
-                await old_bridge.stop()
+            if self.bridge is None:
+                self.proxy_phase = "error"
+                self.proxy_message = "No Bluetooth Proxy bridge is available"
+                return
 
-            bridge = BluetoothProxyBridge(configs, mode=mode)
-            await bridge.start()
-            self.bridge = bridge
-            self.proxy_mode = mode
-            self.proxy_phase = "ready" if bridge.state.connected else "connecting"
+            self.proxy_phase = "ready" if self.bridge.state.connected else "connecting"
             self.proxy_message = (
-                f"{bridge.connected_count} Bluetooth Proxy connection(s) ready"
-                if bridge.state.connected
+                f"{self.bridge.connected_count} Bluetooth Proxy connection(s) ready"
+                if self.bridge.state.connected
                 else "Proxy configuration completed; waiting for runtime connections"
             )
 
@@ -213,6 +319,7 @@ class Runtime:
                     pass
         if self.bridge is not None:
             await self.bridge.stop()
+        self.active_proxy_configs = []
 
     async def publish_inventory(self) -> None:
         if self.bridge is None:
@@ -285,6 +392,17 @@ def configure_logging(debug: bool) -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         force=True,
     )
+    # The websockets DEBUG logger prints complete frame payloads.  Our HA auth
+    # message contains SUPERVISOR_TOKEN and ESPHome key replies contain the
+    # Native API encryption key, so never allow this logger below INFO.
+    logging.getLogger("websockets.client").setLevel(logging.INFO)
+    logging.getLogger("websockets.protocol").setLevel(logging.INFO)
+    if not debug:
+        # This app intentionally has no local BlueZ adapter.  habluetooth may
+        # probe for one before the remote ESPHome scanners register; suppress
+        # those expected container-only warnings unless explicit debug is on.
+        logging.getLogger("bluetooth_adapters").setLevel(logging.ERROR)
+        logging.getLogger("habluetooth.channels.bluez").setLevel(logging.ERROR)
 
 
 @asynccontextmanager
@@ -296,7 +414,7 @@ async def lifespan(_: FastAPI):
         await runtime.stop()
 
 
-app = FastAPI(title="ATC OTA over ESPHome", version="0.1.6", lifespan=lifespan)
+app = FastAPI(title="ATC OTA over ESPHome", version="0.1.7", lifespan=lifespan)
 
 
 @app.get("/", response_class=HTMLResponse)

@@ -1,3 +1,15 @@
+## 0.1.7
+
+- Cache the last-known-good auto-discovered ESPHome Bluetooth Proxy configuration in `/data/proxies.json`.
+- Start cached proxy connections immediately on restart, while Home Assistant discovery/probing reconciles in the background.
+- Keep working cached proxies if a transient discovery/DNS failure cannot confirm a replacement.
+- Reduce ESPHome probe timeout from 12 seconds to 4 seconds and probe up to eight ESPHome nodes concurrently.
+- Reduce multicast mDNS browse wait to 1.5 seconds.
+- Ignore obviously invalid Home Assistant configuration hosts such as `app`, `supervisor`, and `localhost`.
+- Avoid reconnecting all Bluetooth Proxy managers when discovery resolves to the same effective proxy set already loaded from cache.
+- Suppress expected local BlueZ/DBus adapter warnings unless debug logging is enabled.
+- Prevent `websockets` DEBUG frame logging from exposing the Home Assistant Supervisor token or ESPHome API encryption keys.
+
 ## 0.1.6
 
 - Start the Home Assistant Ingress Web UI immediately instead of blocking app startup on ESPHome proxy discovery/probing.

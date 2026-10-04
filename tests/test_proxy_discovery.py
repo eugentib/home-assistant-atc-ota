@@ -33,3 +33,15 @@ def test_candidate_hosts_prefers_registry_url() -> None:
     values = _candidate_hosts(entry, device, None)
     assert values[0] == ("192.168.1.77", 6053, "HA device configuration URL")
     assert ("btproxy2.local", 6053, "HA device name") in values
+
+
+def test_candidate_hosts_rejects_generic_app_host() -> None:
+    entry = {"title": "ESP32 Relay X2 EVSE"}
+    device = {
+        "configuration_url": "http://app/",
+        "name": "ESP32 Relay X2 EVSE",
+        "name_by_user": None,
+    }
+    values = _candidate_hosts(entry, device, None)
+    assert all(host != "app" for host, _, _ in values)
+    assert values == [("esp32-relay-x2-evse.local", 6053, "HA device name")]

@@ -226,6 +226,32 @@ def _slug_hostname(value: str | None) -> str:
     return f"{slug}.local" if slug else ""
 
 
+_INVALID_HOSTS = {
+    "app",
+    "homeassistant",
+    "home-assistant",
+    "supervisor",
+    "localhost",
+    "127.0.0.1",
+    "::1",
+}
+
+
+def _is_plausible_esphome_host(value: str | None) -> bool:
+    """Reject generic HA/app hosts that cannot identify a LAN ESPHome node."""
+    host = str(value or "").strip().rstrip(".").lower()
+    if not host or host in _INVALID_HOSTS:
+        return False
+    try:
+        ipaddress.ip_address(host.split("%", 1)[0])
+        return True
+    except ValueError:
+        pass
+    # Derived ESPHome candidates are normally .local.  FQDNs are also valid;
+    # a single generic label from a HA configuration_url is too ambiguous.
+    return host.endswith(".local") or "." in host
+
+
 def _candidate_hosts(
     entry: dict[str, Any],
     device: dict[str, Any] | None,
@@ -243,7 +269,7 @@ def _candidate_hosts(
 
     def add(host: str, port: int, source: str) -> None:
         host = str(host or "").strip().rstrip(".")
-        if not host:
+        if not _is_plausible_esphome_host(host):
             return
         key = (host.lower(), int(port))
         if any((h.lower(), p) == key for h, p, _ in candidates):
@@ -281,7 +307,7 @@ def _network_mac_for_entry(devices: list[dict[str, Any]], entry_id: str) -> str:
     return ""
 
 
-async def _probe_proxy(proxy: DiscoveredProxy) -> DiscoveredProxy:
+async def _probe_proxy(proxy: DiscoveredProxy, *, timeout: float = 4.0) -> DiscoveredProxy:
     if proxy.port != 6053:
         proxy.status = "unsupported-port"
         proxy.error = "bleak-esphome currently requires ESPHome API port 6053"
@@ -289,7 +315,7 @@ async def _probe_proxy(proxy: DiscoveredProxy) -> DiscoveredProxy:
 
     client = APIClient(proxy.host, proxy.port, noise_psk=proxy.noise_psk or None)
     try:
-        async with asyncio.timeout(12):
+        async with asyncio.timeout(timeout):
             await client.connect(login=True)
             info = await client.device_info()
         device_mac = normalize_mac(str(getattr(info, "mac_address", "") or ""))
@@ -323,7 +349,7 @@ async def _probe_proxy(proxy: DiscoveredProxy) -> DiscoveredProxy:
     return proxy
 
 
-async def discover_home_assistant_proxies(timeout: float = 3.0) -> tuple[list[DiscoveredProxy], str | None]:
+async def discover_home_assistant_proxies(timeout: float = 1.5) -> tuple[list[DiscoveredProxy], str | None]:
     """Find ESPHome entries in HA, match them to mDNS, retrieve API keys, and probe BT capability."""
     token = os.environ.get("SUPERVISOR_TOKEN", "")
     if not token:
@@ -360,7 +386,7 @@ async def discover_home_assistant_proxies(timeout: float = 3.0) -> tuple[list[Di
 
     by_mac = {node.mac: node for node in mdns_nodes if node.mac}
     by_name = {node.name.lower(): node for node in mdns_nodes}
-    semaphore = asyncio.Semaphore(4)
+    semaphore = asyncio.Semaphore(8)
 
     async def resolve_entry(entry: dict[str, Any]) -> DiscoveredProxy | None:
         if entry.get("state") != "loaded" or entry.get("disabled_by") is not None:
