@@ -1,10 +1,15 @@
-# ATC OTA for Home Assistant — v0.2.0
+# ATC OTA for Home Assistant — v0.2.1
+
+## v0.2.1 compatibility fix
+
+This release keeps config-flow imports lightweight, adds the custom-integration translation file, uses Home Assistant 2026.9-style options flow handling, and matches BTHome/custom ATC payloads via `service_data_uuid`. Runtime Bluetooth imports are deferred until the config entry is actually set up.
+
 
 A Home Assistant custom integration for pvvx/ATC Telink thermometers such as **LYWSD03MMC**.
 
-## Why v0.2.0 is different
+## Why v0.2.1 is different
 
-v0.1.x was a Home Assistant app/add-on that opened its own ESPHome API subscriptions to Bluetooth Proxy nodes. v0.2.0 is a **custom integration inside Home Assistant Core** and uses Home Assistant's existing Bluetooth manager instead.
+v0.1.x was a Home Assistant app/add-on that opened its own ESPHome API subscriptions to Bluetooth Proxy nodes. v0.2.1 is a **custom integration inside Home Assistant Core** and uses Home Assistant's existing Bluetooth manager instead.
 
 That means:
 
@@ -32,7 +37,7 @@ That means:
 
 ## Migration from v0.1.x
 
-**Stop the old ATC OTA app/add-on before enabling v0.2.0.** The old app should not run alongside this integration.
+**Stop the old ATC OTA app/add-on before enabling v0.2.1.** The old app should not run alongside this integration.
 
 The add-on inventory cannot be imported automatically because app `/data` is isolated from Home Assistant Core. Devices are re-discovered from Home Assistant's Bluetooth history and advertisements.
 

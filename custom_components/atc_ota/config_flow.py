@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, override
 
 import voluptuous as vol
 
-from homeassistant import config_entries
 from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigFlow,
+    ConfigFlowResult,
+    OptionsFlowWithReload,
+)
 from homeassistant.core import callback
 
 from .const import (
@@ -29,49 +34,63 @@ def _looks_supported(discovery_info: BluetoothServiceInfoBleak) -> bool:
     )
 
 
-class AtcOtaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+class AtcOtaConfigFlow(ConfigFlow, domain=DOMAIN):
     """Configure the singleton ATC OTA manager."""
 
     VERSION = 1
 
-    async def async_step_user(self, user_input: dict[str, Any] | None = None):
-        if self._async_current_entries():
-            return self.async_abort(reason="single_instance_allowed")
+    @override
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         if user_input is not None:
             await self.async_set_unique_id(DOMAIN)
             self._abort_if_unique_id_configured()
             return self.async_create_entry(title="ATC OTA", data={})
-        return self.async_show_form(step_id="user")
+        return self.async_show_form(step_id="user", data_schema=vol.Schema({}))
 
-    async def async_step_bluetooth(self, discovery_info: BluetoothServiceInfoBleak):
+    @override
+    async def async_step_bluetooth(
+        self, discovery_info: BluetoothServiceInfoBleak
+    ) -> ConfigFlowResult:
         if not _looks_supported(discovery_info):
             return self.async_abort(reason="not_supported")
-        if self._async_current_entries():
-            return self.async_abort(reason="single_instance_allowed")
         await self.async_set_unique_id(DOMAIN)
         self._abort_if_unique_id_configured()
-        self.context["title_placeholders"] = {"name": discovery_info.name or "ATC thermometer"}
+        self.context["title_placeholders"] = {
+            "name": discovery_info.name or "ATC thermometer"
+        }
         return await self.async_step_bluetooth_confirm()
 
-    async def async_step_bluetooth_confirm(self, user_input: dict[str, Any] | None = None):
+    async def async_step_bluetooth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         if user_input is not None:
             return self.async_create_entry(title="ATC OTA", data={})
         return self.async_show_form(
             step_id="bluetooth_confirm",
-            description_placeholders={"name": self.context.get("title_placeholders", {}).get("name", "ATC thermometer")},
+            data_schema=vol.Schema({}),
+            description_placeholders={
+                "name": self.context.get("title_placeholders", {}).get(
+                    "name", "ATC thermometer"
+                )
+            },
         )
 
     @staticmethod
     @callback
-    def async_get_options_flow(config_entry):
-        return AtcOtaOptionsFlow(config_entry)
+    @override
+    def async_get_options_flow(config_entry: ConfigEntry) -> "AtcOtaOptionsFlow":
+        return AtcOtaOptionsFlow()
 
 
-class AtcOtaOptionsFlow(config_entries.OptionsFlow):
-    def __init__(self, config_entry) -> None:
-        self.config_entry = config_entry
+class AtcOtaOptionsFlow(OptionsFlowWithReload):
+    """ATC OTA options; Home Assistant supplies self.config_entry."""
 
-    async def async_step_init(self, user_input: dict[str, Any] | None = None):
+    @override
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
         options = self.config_entry.options
@@ -79,15 +98,21 @@ class AtcOtaOptionsFlow(config_entries.OptionsFlow):
             {
                 vol.Required(
                     CONF_LOW_BATTERY_THRESHOLD,
-                    default=options.get(CONF_LOW_BATTERY_THRESHOLD, DEFAULT_LOW_BATTERY_THRESHOLD),
+                    default=options.get(
+                        CONF_LOW_BATTERY_THRESHOLD, DEFAULT_LOW_BATTERY_THRESHOLD
+                    ),
                 ): vol.All(vol.Coerce(int), vol.Range(min=5, max=80)),
                 vol.Required(
                     CONF_AUTO_PROBE_METADATA,
-                    default=options.get(CONF_AUTO_PROBE_METADATA, DEFAULT_AUTO_PROBE_METADATA),
+                    default=options.get(
+                        CONF_AUTO_PROBE_METADATA, DEFAULT_AUTO_PROBE_METADATA
+                    ),
                 ): bool,
                 vol.Required(
                     CONF_AUTO_PROBE_MIN_RSSI,
-                    default=options.get(CONF_AUTO_PROBE_MIN_RSSI, DEFAULT_AUTO_PROBE_MIN_RSSI),
+                    default=options.get(
+                        CONF_AUTO_PROBE_MIN_RSSI, DEFAULT_AUTO_PROBE_MIN_RSSI
+                    ),
                 ): vol.All(vol.Coerce(int), vol.Range(min=-110, max=-30)),
             }
         )

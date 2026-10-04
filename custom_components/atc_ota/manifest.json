@@ -1,16 +1,31 @@
 {
   "domain": "atc_ota",
   "name": "ATC OTA",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "config_flow": true,
-  "dependencies": ["bluetooth"],
+  "dependencies": [
+    "bluetooth",
+    "bluetooth_adapters"
+  ],
   "documentation": "https://github.com/eugentib/home-assistant-atc-ota",
   "issue_tracker": "https://github.com/eugentib/home-assistant-atc-ota/issues",
   "iot_class": "local_push",
-  "requirements": ["bleak-retry-connector==4.7.1"],
-  "codeowners": ["@eugentib"],
+  "requirements": [
+    "bleak-retry-connector==4.7.1"
+  ],
+  "codeowners": [
+    "@eugentib"
+  ],
   "bluetooth": [
-    {"service_uuid": "0000fcd2-0000-1000-8000-00805f9b34fb"},
-    {"service_uuid": "0000181a-0000-1000-8000-00805f9b34fb"}
-  ]
+    {
+      "service_data_uuid": "0000fcd2-0000-1000-8000-00805f9b34fb",
+      "connectable": false
+    },
+    {
+      "service_data_uuid": "0000181a-0000-1000-8000-00805f9b34fb",
+      "connectable": false
+    }
+  ],
+  "integration_type": "hub",
+  "single_config_entry": true
 }

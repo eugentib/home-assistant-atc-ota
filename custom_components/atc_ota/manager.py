@@ -14,7 +14,6 @@ from bleak import BleakClient
 from bleak_retry_connector import establish_connection
 
 from homeassistant.components import bluetooth
-from homeassistant.components.bluetooth.match import BluetoothCallbackMatcher
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.dispatcher import async_dispatcher_send
@@ -157,13 +156,13 @@ class AtcManager:
                 bluetooth.async_register_callback(
                     self.hass,
                     self._async_bluetooth_event,
-                    BluetoothCallbackMatcher(service_uuid=BTHOME_UUID, connectable=False),
+                    {"service_data_uuid": BTHOME_UUID, "connectable": False},
                     bluetooth.BluetoothScanningMode.PASSIVE,
                 ),
                 bluetooth.async_register_callback(
                     self.hass,
                     self._async_bluetooth_event,
-                    BluetoothCallbackMatcher(service_uuid=ENV_SENSING_UUID, connectable=False),
+                    {"service_data_uuid": ENV_SENSING_UUID, "connectable": False},
                     bluetooth.BluetoothScanningMode.PASSIVE,
                 ),
             ]
