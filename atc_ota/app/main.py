@@ -185,12 +185,19 @@ class Runtime:
             logging.exception("Unable to write proxy cache %s", PROXY_CACHE_FILE)
 
     @staticmethod
-    def _proxy_signature(configs: list[dict[str, Any]]) -> tuple[tuple[str, str, str], ...]:
+    def _proxy_signature(configs: list[dict[str, Any]]) -> tuple[tuple[str, str, str, str, str], ...]:
+        # Runtime metadata matters too.  In particular habluetooth identifies an
+        # ESPHome remote scanner by its BLE MAC, not by the ESPHome/Wi-Fi MAC.
+        # v0.1.7 caches did not contain bluetooth_mac; if we ignored it here, a
+        # cached bridge could survive discovery and the UI would show raw BLE
+        # MACs instead of friendly proxy names until the next process restart.
         return tuple(sorted(
             (
                 str(item.get("entry_id") or ""),
                 str(item.get("address") or "").strip().lower().rstrip("."),
                 str(item.get("noise_psk") or ""),
+                str(item.get("name") or ""),
+                str(item.get("bluetooth_mac") or "").strip().upper(),
             )
             for item in configs
             if str(item.get("address") or "").strip()
@@ -415,7 +422,7 @@ async def lifespan(_: FastAPI):
         await runtime.stop()
 
 
-app = FastAPI(title="ATC OTA over ESPHome", version="0.1.8", lifespan=lifespan)
+app = FastAPI(title="ATC OTA over ESPHome", version="0.1.9", lifespan=lifespan)
 
 
 @app.get("/", response_class=HTMLResponse)

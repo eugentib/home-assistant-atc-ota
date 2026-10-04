@@ -67,7 +67,7 @@ INDEX_HTML = r'''<!doctype html>
     <div id="scanInfo" class="muted">Loading saved inventory…</div>
     <div style="overflow:auto">
       <table>
-        <thead><tr><th></th><th>Name</th><th>Model</th><th>Address</th><th>RSSI</th><th>HW</th><th>Current</th><th>Latest</th><th>Update</th><th>Best proxy</th><th>Seen by</th><th>Format</th></tr></thead>
+        <thead><tr><th></th><th>Name</th><th>Model</th><th>Address</th><th>RSSI</th><th>HW</th><th>Current</th><th>Latest</th><th>Update</th><th>Strongest proxy</th><th>Seen by</th><th>Format</th></tr></thead>
         <tbody id="deviceRows"></tbody>
       </table>
     </div>
@@ -226,7 +226,7 @@ function renderDevices() {
       <td>${escapeHtml(d.device_name || d.advertised_name || d.name || '(unnamed)')}</td>
       <td>${escapeHtml(d.model || '')}</td>
       <td>${escapeHtml(d.address)}</td>
-      <td>${d.rssi ?? ''}</td>
+      <td title="${escapeHtml(d.route_proxy && d.route_proxy !== d.best_proxy ? `habluetooth route: ${d.route_proxy}${Number.isFinite(d.route_rssi) ? ` ${d.route_rssi} dBm` : ''}` : '')}">${d.rssi ?? ''}</td>
       <td>${escapeHtml(d.hardware_revision || '')}</td>
       <td>${escapeHtml(d.current_version || '')}</td>
       <td>${escapeHtml(d.latest?.version || '')}</td>

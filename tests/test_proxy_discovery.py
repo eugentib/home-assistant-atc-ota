@@ -45,3 +45,13 @@ def test_candidate_hosts_rejects_generic_app_host() -> None:
     values = _candidate_hosts(entry, device, None)
     assert all(host != "app" for host, _, _ in values)
     assert values == [("esp32-relay-x2-evse.local", 6053, "HA device name")]
+
+
+def test_proxy_runtime_signature_changes_when_scanner_metadata_changes() -> None:
+    # Importing main pulls in the BLE runtime dependencies, so keep this as a
+    # structural regression assertion against the source: bluetooth_mac/name
+    # must participate in the signature or an old cache can keep stale mapping.
+    main_source = (ROOT / "atc_ota" / "app" / "main.py").read_text(encoding="utf-8")
+    signature_block = main_source.split("def _proxy_signature", 1)[1].split("async def _activate_proxy_configs", 1)[0]
+    assert 'item.get("bluetooth_mac")' in signature_block
+    assert 'item.get("name")' in signature_block

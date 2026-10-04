@@ -1,5 +1,11 @@
 ## 0.1.7
 
+## 0.1.9
+
+- Fixed ESPHome Bluetooth Proxy friendly-name mapping after upgrading from older proxy caches by treating BLE scanner MAC/name changes as runtime configuration changes.
+- RSSI and “Strongest proxy” now come from the strongest per-proxy observation in the current scan instead of habluetooth's sticky/arbitrated BLEDevice source.
+- Preserves habluetooth route source/RSSI separately for diagnostics.
+
 ## 0.1.8
 
 - Rename the BLE table's misleading `Detected by` column to `Format`.

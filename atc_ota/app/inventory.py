@@ -100,6 +100,9 @@ class InventoryStore:
                     "source": item.get("source"),
                     "best_proxy": item.get("best_proxy"),
                     "seen_by": item.get("seen_by", []),
+                    "route_source": item.get("route_source"),
+                    "route_proxy": item.get("route_proxy"),
+                    "route_rssi": item.get("route_rssi"),
                     "last_seen": now,
                 }
             )

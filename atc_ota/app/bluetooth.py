@@ -263,27 +263,52 @@ class BluetoothProxyBridge:
             }
             candidate, reason = classify_atc(name, service_uuids, service_data.keys())
 
+            # The BLEDevice returned by habluetooth represents its currently
+            # selected/arbitrated source.  That source is intentionally sticky
+            # and is not guaranteed to be the scanner with the strongest *latest*
+            # RSSI sample.  For the inventory table we want the strongest actual
+            # observation from this scan, so derive RSSI/Best proxy from the
+            # per-scanner observations instead.  Keep the arbitrated route as
+            # separate diagnostics for connection troubleshooting.
             selected_source = self._device_source(device)
             seen_by = per_source.get(norm_address, [])
-            if not selected_source and seen_by:
-                selected_source = str(seen_by[0].get("source") or "")
-            best_proxy = self._proxy_name_for_source(selected_source)
-            if not best_proxy and seen_by:
-                best_proxy = str(seen_by[0].get("proxy") or "")
+            strongest = seen_by[0] if seen_by else None
+
+            if strongest is not None:
+                strongest_source = str(strongest.get("source") or "")
+                strongest_proxy = str(strongest.get("proxy") or "")
+                strongest_rssi = strongest.get("rssi")
+            else:
+                strongest_source = selected_source
+                strongest_proxy = self._proxy_name_for_source(selected_source)
+                strongest_rssi = rssi
+
+            # If scanner introspection did not provide a numeric RSSI, fall back
+            # to the normal Bleak advertisement value.
+            display_rssi = strongest_rssi if isinstance(strongest_rssi, int) else rssi
+            best_proxy = strongest_proxy or self._proxy_name_for_source(strongest_source)
+            route_proxy = self._proxy_name_for_source(selected_source) if selected_source else ""
 
             result.append(
                 {
                     "address": address,
                     "name": name or "(unnamed)",
-                    "rssi": rssi,
+                    "rssi": display_rssi,
                     "candidate": candidate,
                     # This describes the advertisement format/signature, not the proxy.
                     "candidate_reason": reason,
                     "service_uuids": service_uuids,
                     "service_data_uuids": list(service_data.keys()),
-                    "source": selected_source,
+                    # source/best_proxy now mean the strongest observation so
+                    # persisted inventory and HA entities agree with the table.
+                    "source": strongest_source,
                     "best_proxy": best_proxy,
                     "seen_by": seen_by,
+                    # habluetooth's current arbitrated source can legitimately
+                    # differ from the strongest instantaneous RSSI.
+                    "route_source": selected_source,
+                    "route_proxy": route_proxy,
+                    "route_rssi": rssi,
                 }
             )
 
