@@ -67,7 +67,7 @@ INDEX_HTML = r'''<!doctype html>
     <div id="scanInfo" class="muted">Loading saved inventory…</div>
     <div style="overflow:auto">
       <table>
-        <thead><tr><th></th><th>Name</th><th>Model</th><th>Address</th><th>RSSI</th><th>HW</th><th>Current</th><th>Latest</th><th>Update</th><th>Strongest proxy</th><th>Seen by</th><th>Format</th></tr></thead>
+        <thead><tr><th></th><th>Name</th><th>Model</th><th>Address</th><th>RSSI</th><th>Battery</th><th>HW</th><th>Current</th><th>Latest</th><th>Update</th><th>Strongest proxy</th><th>Seen by</th><th>Format</th></tr></thead>
         <tbody id="deviceRows"></tbody>
       </table>
     </div>
@@ -89,6 +89,7 @@ INDEX_HTML = r'''<!doctype html>
       <button id="latestBtn" disabled>Update to latest stable pvvx</button>
       <span id="latestHint" class="muted">Select a device first.</span>
     </div>
+    <div id="batteryPolicy" class="muted" style="margin-top:8px">Low-battery OTA warning threshold: 30%.</div>
 
     <hr class="separator">
 
@@ -116,6 +117,7 @@ let selectedInfo = null;
 let pollTimer = null;
 let inventoryPollTimer = null;
 let infoRequestSerial = 0;
+let lowBatteryThreshold = 30;
 
 function escapeHtml(v) {
   return String(v ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
@@ -177,6 +179,8 @@ async function refreshStatus() {
     const mode = s.proxy_mode || s.proxy.mode || 'unknown';
     const count = (s.proxy.proxies || []).filter(p => p.connected).length;
     byId('proxyStatus').innerHTML = `<span class="${cls}"><b>${escapeHtml(s.proxy.status)}</b></span> — mode: <b>${escapeHtml(mode)}</b> — ${count} connected${s.proxy.address ? ' — '+escapeHtml(s.proxy.address) : ''}${s.proxy.error ? '<br><span class="bad">'+escapeHtml(s.proxy.error)+'</span>' : ''}`;
+    lowBatteryThreshold = Number.isFinite(Number(s.low_battery_warning_percent)) ? Number(s.low_battery_warning_percent) : 30;
+    byId('batteryPolicy').textContent = `Low-battery OTA warning threshold: ${lowBatteryThreshold}%. pvvx recommends more than 40% for reliable LYWSD03MMC reflashing.`;
     const phase = s.proxy_phase || '';
     if (phase === 'discovering') {
       byId('proxyDiscoveryNote').innerHTML = `<span class="warn">${escapeHtml(s.proxy_message || 'Discovering ESPHome Bluetooth Proxies…')}</span> The Web UI is ready; this runs in the background.`;
@@ -210,6 +214,48 @@ function formatSeenBy(rows) {
   }).join(', ');
 }
 
+function batteryHtml(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '<span class="muted">—</span>';
+  const low = n <= lowBatteryThreshold;
+  return `<span class="${low ? 'warn' : ''}" title="${low ? `At or below ${lowBatteryThreshold}% OTA warning threshold` : 'Battery level'}">${Math.round(n)}%</span>`;
+}
+
+function cachedDevice(address) {
+  return devices.find(d => String(d.address || '').toUpperCase() === String(address || '').toUpperCase()) || null;
+}
+
+function lowBatteryMessage(info, action) {
+  const value = Number(info?.battery_percent);
+  if (!Number.isFinite(value) || value > lowBatteryThreshold) return null;
+  return `Battery is ${Math.round(value)}% (warning threshold ${lowBatteryThreshold}%).\n\n${action} may fail if battery voltage drops during flashing. pvvx recommends more than 40% for reliable LYWSD03MMC reflashing.\n\nContinue anyway?`;
+}
+
+async function postOtaWithLowBatteryRetry(url, formFactory, action) {
+  let confirmedLowBattery = false;
+  const cached = selectedInfo || cachedDevice(selectedAddress);
+  const cachedWarning = lowBatteryMessage(cached, action);
+  if (cachedWarning) {
+    if (!confirm(cachedWarning)) return null;
+    confirmedLowBattery = true;
+  }
+
+  for (;;) {
+    const form = formFactory(confirmedLowBattery);
+    const r = await fetch(apiUrl(url), {method:'POST', body:form});
+    const data = await r.json();
+    if (r.status === 409 && data?.detail?.code === 'low_battery' && !confirmedLowBattery) {
+      const warningInfo = {battery_percent: data.detail.battery_percent};
+      const msg = lowBatteryMessage(warningInfo, action) || data.detail.message || 'Low battery. Continue anyway?';
+      if (!confirm(msg)) return null;
+      confirmedLowBattery = true;
+      continue;
+    }
+    if (!r.ok) throw new Error(typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail || data));
+    return data;
+  }
+}
+
 function renderDevices() {
   const showAll = byId('showAll').checked;
   const visible = devices.filter(d => showAll || d.candidate || d.model);
@@ -227,6 +273,7 @@ function renderDevices() {
       <td>${escapeHtml(d.model || '')}</td>
       <td>${escapeHtml(d.address)}</td>
       <td title="${escapeHtml(d.route_proxy && d.route_proxy !== d.best_proxy ? `habluetooth route: ${d.route_proxy}${Number.isFinite(d.route_rssi) ? ` ${d.route_rssi} dBm` : ''}` : '')}">${d.rssi ?? ''}</td>
+      <td>${batteryHtml(d.battery_percent)}</td>
       <td>${escapeHtml(d.hardware_revision || '')}</td>
       <td>${escapeHtml(d.current_version || '')}</td>
       <td>${escapeHtml(d.latest?.version || '')}</td>
@@ -236,7 +283,7 @@ function renderDevices() {
       <td>${escapeHtml(d.candidate_reason || '')}</td>
     </tr>`;
   }).join('');
-  byId('deviceRows').innerHTML = rows || '<tr><td colspan="12" class="muted">No matching devices. Enable “Show all” to inspect every BLE advertisement.</td></tr>';
+  byId('deviceRows').innerHTML = rows || '<tr><td colspan="13" class="muted">No matching devices. Enable “Show all” to inspect every BLE advertisement.</td></tr>';
   document.querySelectorAll('input[name=device]').forEach(r => r.addEventListener('change', ev => selectDevice(ev.target.dataset.address)));
 }
 
@@ -246,6 +293,7 @@ function renderSelectedInfo(info) {
     <div class="label">Device name</div><div>${escapeHtml(info.device_name || info.advertised_name || '(unnamed)')}</div>
     <div class="label">Model</div><div>${escapeHtml(info.model || '')}</div>
     <div class="label">Hardware</div><div>${escapeHtml(info.hardware_revision || '')}</div>
+    <div class="label">Battery</div><div>${batteryHtml(info.battery_percent)}</div>
     <div class="label">Software</div><div>${escapeHtml(info.software_revision || info.current_version || '')}</div>
     <div class="label">Firmware ID</div><div>${escapeHtml(info.firmware_revision || '')}</div>
     <div class="label">Manufacturer</div><div>${escapeHtml(info.manufacturer || '')}</div>
@@ -416,17 +464,21 @@ byId('latestBtn').addEventListener('click', async () => {
   const address = byId('target').value.trim();
   if (!address) { alert('Select or enter a BLE address.'); return; }
   const version = selectedInfo?.latest?.version || 'latest stable';
-  if (!confirm(`Download pvvx ${version} directly from the upstream repository and OTA flash ${address}?`)) return;
+  const cachedWarning = lowBatteryMessage(selectedInfo || cachedDevice(address), `Updating ${address} to pvvx ${version}`);
+  if (!cachedWarning && !confirm(`Download pvvx ${version} directly from the upstream repository and OTA flash ${address}?`)) return;
 
-  const form = new FormData();
-  form.append('address', address);
   const btn = byId('latestBtn');
   btn.disabled = true;
-  resetJobUi('Downloading latest stable firmware…');
+  resetJobUi('Checking battery and downloading latest stable firmware…');
   try {
-    const r = await fetch(apiUrl('api/ota/latest'), {method:'POST', body:form});
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.detail || JSON.stringify(data));
+    selectedAddress = address;
+    const data = await postOtaWithLowBatteryRetry('api/ota/latest', (confirmed) => {
+      const form = new FormData();
+      form.append('address', address);
+      form.append('confirm_low_battery', confirmed ? 'true' : 'false');
+      return form;
+    }, `Updating ${address} to pvvx ${version}`);
+    if (!data) { btn.disabled = false; byId('jobState').textContent = 'OTA cancelled'; return; }
     startPolling(data.job_id);
   } catch (e) {
     byId('jobState').innerHTML = `<span class="bad">${escapeHtml(String(e))}</span>`;
@@ -439,18 +491,22 @@ byId('flashBtn').addEventListener('click', async () => {
   const file = byId('firmware').files[0];
   if (!address) { alert('Select or enter a BLE address.'); return; }
   if (!file) { alert('Select a firmware .bin file.'); return; }
-  if (!confirm(`Start manual OTA to ${address}? Do not interrupt the target during flashing.`)) return;
+  const cachedWarning = lowBatteryMessage(selectedInfo || cachedDevice(address), `Manual OTA of ${file.name} to ${address}`);
+  if (!cachedWarning && !confirm(`Start manual OTA to ${address}? Do not interrupt the target during flashing.`)) return;
 
-  const form = new FormData();
-  form.append('address', address);
-  form.append('firmware', file);
   const btn = byId('flashBtn');
   btn.disabled = true;
-  resetJobUi('Starting…');
+  resetJobUi('Checking battery and starting manual OTA…');
   try {
-    const r = await fetch(apiUrl('api/ota'), {method:'POST', body:form});
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.detail || JSON.stringify(data));
+    selectedAddress = address;
+    const data = await postOtaWithLowBatteryRetry('api/ota', (confirmed) => {
+      const form = new FormData();
+      form.append('address', address);
+      form.append('firmware', file);
+      form.append('confirm_low_battery', confirmed ? 'true' : 'false');
+      return form;
+    }, `Manual OTA of ${file.name} to ${address}`);
+    if (!data) { btn.disabled = false; byId('jobState').textContent = 'OTA cancelled'; return; }
     startPolling(data.job_id);
   } catch (e) {
     byId('jobState').innerHTML = `<span class="bad">${escapeHtml(String(e))}</span>`;

@@ -1,5 +1,5 @@
 name: "ATC OTA over ESPHome"
-version: "0.1.9"
+version: "0.1.10"
 slug: "atc_ota"
 description: "Inventory and update pvvx/ATC Telink thermometers through auto-discovered ESPHome Bluetooth Proxies"
 url: "https://github.com/eugentib/home-assistant-atc-ota"
@@ -22,6 +22,7 @@ options:
   scan_seconds: 8
   publish_to_home_assistant: true
   catalog_refresh_hours: 6
+  low_battery_warning_percent: 30
   debug: false
 schema:
   auto_discover_proxies: bool
@@ -30,4 +31,5 @@ schema:
   scan_seconds: int(3,30)
   publish_to_home_assistant: bool
   catalog_refresh_hours: int(1,168)
+  low_battery_warning_percent: int(1,100)
   debug: bool

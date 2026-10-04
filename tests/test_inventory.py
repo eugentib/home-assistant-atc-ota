@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "atc_ota"))
 
 from app.ha_publish import entity_suffix  # noqa: E402
-from app.inventory import update_available, version_tuple  # noqa: E402
+from app.inventory import InventoryStore, update_available, version_tuple  # noqa: E402
 
 
 def test_version_parsing() -> None:
@@ -25,3 +25,17 @@ def test_update_available() -> None:
 
 def test_entity_suffix() -> None:
     assert entity_suffix("A4:C1:38:51:5D:77") == "a4_c1_38_51_5d_77"
+
+
+def test_inventory_persists_battery_percent(tmp_path):
+    store = InventoryStore(tmp_path / "devices.json")
+    entry = store.update_info(
+        "A4:C1:38:00:00:01",
+        {"model": "LYWSD03MMC", "current_version": "V5.9", "battery_percent": 27},
+        latest={"version": "5.9", "path": "bin/ATC_v59.bin", "filename": "ATC_v59.bin"},
+        latest_error=None,
+    )
+    assert entry["battery_percent"] == 27
+    store.save()
+    reloaded = InventoryStore(tmp_path / "devices.json")
+    assert reloaded.get("A4:C1:38:00:00:01")["battery_percent"] == 27

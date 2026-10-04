@@ -16,6 +16,7 @@ UUID_FIRMWARE_REV = "00002a26-0000-1000-8000-00805f9b34fb"
 UUID_HARDWARE_REV = "00002a27-0000-1000-8000-00805f9b34fb"
 UUID_SOFTWARE_REV = "00002a28-0000-1000-8000-00805f9b34fb"
 UUID_MANUFACTURER = "00002a29-0000-1000-8000-00805f9b34fb"
+UUID_BATTERY_LEVEL = "00002a19-0000-1000-8000-00805f9b34fb"
 
 
 def _decode_text(data: bytes | bytearray) -> str:
@@ -33,6 +34,23 @@ async def _read_text(client: Any, uuid: str) -> str | None:
         return None
     text = _decode_text(value)
     return text or None
+
+
+async def _read_battery_percent(client: Any) -> int | None:
+    """Read the standard Battery Level characteristic (0x2A19)."""
+    characteristic = client.services.get_characteristic(UUID_BATTERY_LEVEL)
+    if characteristic is None:
+        return None
+    try:
+        value = bytes(await client.read_gatt_char(characteristic))
+    except Exception as exc:  # noqa: BLE001 - service may be absent on other devices
+        _LOGGER.debug("Unable to read battery level: %s", exc)
+        return None
+    if not value:
+        return None
+    # Bluetooth Battery Level is an unsigned percentage. Be defensive about
+    # non-conforming firmware values while keeping the raw GATT read harmless.
+    return max(0, min(100, int(value[0])))
 
 
 async def read_device_info(address: str) -> dict[str, Any]:
@@ -58,6 +76,7 @@ async def read_device_info(address: str) -> dict[str, Any]:
         hardware_revision = await _read_text(client, UUID_HARDWARE_REV)
         software_revision = await _read_text(client, UUID_SOFTWARE_REV)
         manufacturer = await _read_text(client, UUID_MANUFACTURER)
+        battery_percent = await _read_battery_percent(client)
 
         # Most pvvx releases put the release in Software Revision and the
         # project identifier in Firmware Revision.  Some builds expose those
@@ -78,6 +97,7 @@ async def read_device_info(address: str) -> dict[str, Any]:
             "hardware_revision": hardware_revision,
             "software_revision": software_revision,
             "manufacturer": manufacturer,
+            "battery_percent": battery_percent,
             "current_version": current_version,
         }
     finally:

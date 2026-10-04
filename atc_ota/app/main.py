@@ -87,7 +87,7 @@ class Runtime:
         self.inventory_job = InventoryJob()
         self.inventory_task: asyncio.Task[None] | None = None
         self.maintenance_task: asyncio.Task[None] | None = None
-        self.publisher = HomeAssistantPublisher(False)
+        self.publisher = HomeAssistantPublisher(False, 30)
         self.proxy_discovery: list[dict[str, Any]] = []
         self.proxy_discovery_error: str | None = None
         self.proxy_mode = "not-started"
@@ -108,7 +108,8 @@ class Runtime:
         configure_logging(bool(self.options.get("debug", False)))
 
         self.publisher = HomeAssistantPublisher(
-            bool(self.options.get("publish_to_home_assistant", True))
+            bool(self.options.get("publish_to_home_assistant", True)),
+            int(self.options.get("low_battery_warning_percent", 30)),
         )
         self.proxy_phase = "discovering"
         self.proxy_message = "Discovering ESPHome Bluetooth Proxies in the background"
@@ -381,6 +382,7 @@ def load_options() -> dict[str, Any]:
         "scan_seconds": 8,
         "publish_to_home_assistant": True,
         "catalog_refresh_hours": 6,
+        "low_battery_warning_percent": 30,
         "debug": False,
     }
     if not OPTIONS_FILE.exists():
@@ -422,7 +424,7 @@ async def lifespan(_: FastAPI):
         await runtime.stop()
 
 
-app = FastAPI(title="ATC OTA over ESPHome", version="0.1.9", lifespan=lifespan)
+app = FastAPI(title="ATC OTA over ESPHome", version="0.1.10", lifespan=lifespan)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -460,6 +462,7 @@ async def status() -> dict[str, Any]:
         "proxy_discovery": runtime.proxy_discovery,
         "proxy_discovery_error": runtime.proxy_discovery_error,
         "scan_seconds": runtime.options.get("scan_seconds", 8),
+        "low_battery_warning_percent": int(runtime.options.get("low_battery_warning_percent", 30)),
         "home_assistant": {
             "publishing_enabled": runtime.publisher.enabled,
             "api_available": runtime.publisher.available,
@@ -651,8 +654,31 @@ async def device_info(address: str = Form(...)) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail=f"{type(exc).__name__}: {exc}") from exc
 
 
+def _low_battery_warning(item: dict[str, Any]) -> dict[str, Any] | None:
+    """Return a structured OTA warning when the latest battery read is low."""
+    value = item.get("battery_percent")
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    threshold = max(1, min(100, int(runtime.options.get("low_battery_warning_percent", 30))))
+    battery = int(value)
+    if battery > threshold:
+        return None
+    return {
+        "code": "low_battery",
+        "battery_percent": battery,
+        "threshold_percent": threshold,
+        "message": (
+            f"Battery is {battery}%, at or below the configured {threshold}% warning threshold. "
+            "A firmware update can fail if the battery voltage drops during flashing."
+        ),
+    }
+
+
 @app.post("/api/ota/latest")
-async def start_latest_ota(address: str = Form(...)) -> dict[str, str]:
+async def start_latest_ota(
+    address: str = Form(...),
+    confirm_low_battery: bool = Form(False),
+) -> dict[str, str]:
     address = normalize_address(address)
     if not address:
         raise HTTPException(status_code=400, detail="BLE address is required")
@@ -662,11 +688,16 @@ async def start_latest_ota(address: str = Form(...)) -> dict[str, str]:
     try:
         async with runtime.ble_lock:
             info = await _read_and_cache_device(address)
+        warning = _low_battery_warning(info)
+        if warning is not None and not confirm_low_battery:
+            raise HTTPException(status_code=409, detail=warning)
         choice = await get_latest_choice(
             model=info.get("model"),
             hardware_revision=info.get("hardware_revision"),
         )
         data = await download_firmware(choice)
+    except HTTPException:
+        raise
     except Exception as exc:  # noqa: BLE001 - report upstream/BLE errors to the UI
         logging.exception("Unable to prepare latest firmware OTA for %s", address)
         raise HTTPException(status_code=503, detail=f"{type(exc).__name__}: {exc}") from exc
@@ -678,7 +709,11 @@ async def start_latest_ota(address: str = Form(...)) -> dict[str, str]:
         filename=choice.filename,
     )
     current = info.get("current_version") or "unknown"
-    job.add(0, f"Downloaded pvvx stable {choice.version} ({choice.filename}); current: {current}")
+    battery = info.get("battery_percent")
+    battery_text = f"; battery: {int(battery)}%" if isinstance(battery, (int, float)) and not isinstance(battery, bool) else "; battery: unknown"
+    job.add(0, f"Downloaded pvvx stable {choice.version} ({choice.filename}); current: {current}{battery_text}")
+    if warning is not None:
+        job.add(0, f"Low-battery warning acknowledged: {warning['battery_percent']}% <= {warning['threshold_percent']}%")
     runtime.jobs[job_id] = job
     asyncio.create_task(_run_ota_job(job, data))
     return {"job_id": job_id}
@@ -688,6 +723,7 @@ async def start_latest_ota(address: str = Form(...)) -> dict[str, str]:
 async def start_ota(
     address: str = Form(...),
     firmware: UploadFile = File(...),
+    confirm_low_battery: bool = Form(False),
 ) -> dict[str, str]:
     address = normalize_address(address)
     if not address:
@@ -702,13 +738,32 @@ async def start_ota(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    if runtime.bridge is None or not runtime.bridge.state.connected:
+        raise HTTPException(status_code=503, detail="ESPHome Bluetooth Proxy is not connected")
+
+    # Refresh the battery immediately before accepting a manual flash.  If the
+    # model does not expose Battery Level we keep the manual fallback usable.
+    try:
+        async with runtime.ble_lock:
+            info = await _read_and_cache_device(address)
+    except Exception as exc:  # noqa: BLE001 - unknown battery must not disable manual recovery
+        logging.warning("Unable to refresh battery before manual OTA for %s: %s", address, exc)
+        info = runtime.inventory.get(address) or {}
+    warning = _low_battery_warning(info)
+    if warning is not None and not confirm_low_battery:
+        raise HTTPException(status_code=409, detail=warning)
+
     job_id = uuid.uuid4().hex
     job = Job(
         id=job_id,
         address=address,
         filename=firmware.filename or "firmware.bin",
     )
-    job.add(0, f"Queued {job.filename} for {address}")
+    battery = info.get("battery_percent")
+    battery_text = f"; battery: {int(battery)}%" if isinstance(battery, (int, float)) and not isinstance(battery, bool) else "; battery: unknown"
+    job.add(0, f"Queued {job.filename} for {address}{battery_text}")
+    if warning is not None:
+        job.add(0, f"Low-battery warning acknowledged: {warning['battery_percent']}% <= {warning['threshold_percent']}%")
     runtime.jobs[job_id] = job
     asyncio.create_task(_run_ota_job(job, data))
     return {"job_id": job_id}

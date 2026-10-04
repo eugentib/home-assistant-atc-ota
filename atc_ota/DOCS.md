@@ -121,3 +121,10 @@ The app first queries Home Assistant for loaded ESPHome entries and their API en
 ## Startup behavior
 
 The Ingress Web UI starts immediately. Automatic ESPHome Bluetooth Proxy discovery/probing continues in the background; the proxy status section updates while it runs. You do not need to restart the app while it shows `discovering`.
+
+
+## Battery level and OTA warning
+
+The app reads Battery Service characteristic `0x2A19` during active GATT inventory/device reads. `low_battery_warning_percent` controls the warning threshold and defaults to `30`. Before automatic or manual OTA, the battery is refreshed; at or below the threshold the UI asks for explicit confirmation. If battery level cannot be read, OTA remains available and the battery is shown as unknown.
+
+Home Assistant publishing also creates a battery sensor and a low-battery binary sensor for devices that expose a battery value. Upstream pvvx documentation recommends more than 40% battery for reliable LYWSD03MMC reflashing.

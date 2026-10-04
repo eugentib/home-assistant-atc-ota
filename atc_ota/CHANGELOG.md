@@ -1,3 +1,14 @@
+# Changelog
+
+## 0.1.10
+
+- Read standard BLE Battery Level (`0x2A19`) during GATT device information refresh.
+- Show cached/refreshed battery percentage in the inventory table and selected-device details.
+- Add configurable `low_battery_warning_percent` (default 30%).
+- Refresh the battery immediately before automatic or manual OTA and require explicit confirmation at or below the threshold.
+- Publish per-device battery and low-battery state sensors to Home Assistant.
+- Include battery information in OTA logs and update-summary attributes.
+
 ## 0.1.7
 
 ## 0.1.9
@@ -37,8 +48,6 @@
 - Resolve hosts from Home Assistant device `configuration_url` and direct `<name>.local` candidates before falling back to manual configuration.
 - Verify the ESPHome API responder MAC before accepting a derived hostname.
 - Show how each proxy hostname was resolved.
-
-# Changelog
 
 ## 0.1.4
 

@@ -11,11 +11,12 @@ Current features:
 - optional manual proxy address/encryption key fallback;
 - passive BLE scan through `bleak-esphome`;
 - persistent thermometer inventory with active GATT identification;
-- current firmware and hardware revision detection;
+- current firmware, hardware revision and standard GATT battery-level detection;
 - pvvx stable firmware lookup and update-available detection;
-- Home Assistant state sensors for current firmware and available updates;
+- Home Assistant state sensors for current firmware, battery level, low-battery state and available updates;
 - one-click official pvvx firmware download for LYWSD03MMC;
 - manual Telink `.bin` upload fallback;
+- configurable low-battery OTA warning (default 30%) with a fresh battery read immediately before flashing;
 - pvvx-compatible Telink OTA;
 - Home Assistant Ingress web UI with progress and logs.
 
@@ -49,7 +50,7 @@ The inventory itself is persisted in the app data directory and is republished a
 
 ## Status
 
-Version `0.1.7` remains experimental. Use it first on a thermometer that you can recover by SWire if necessary.
+Version `0.1.10` remains experimental. Use it first on a thermometer that you can recover by SWire if necessary.
 
 ## Upstream projects
 
@@ -70,3 +71,10 @@ The app first queries Home Assistant for loaded ESPHome entries and their API en
 ### Bluetooth proxy provenance
 
 The BLE table distinguishes the advertisement **Format** (for example BTHome v2 / 0xFCD2) from the actual ESPHome **Best proxy** used by habluetooth. When supported by the installed habluetooth version, **Seen by** also lists every proxy that heard the device with its RSSI.
+
+
+### Battery preflight
+
+Version `0.1.10` reads the standard BLE Battery Level characteristic (`0x2A19`) during GATT inventory/device refresh. The value is stored in the inventory, shown in the UI, and published to Home Assistant. Before either automatic or manual OTA the app refreshes device information again; if the battery is at or below `low_battery_warning_percent` (default `30`), the UI requires explicit confirmation before the OTA job is queued.
+
+The threshold is configurable. Note that the upstream pvvx documentation recommends **more than 40%** battery for reliable connection/reflashing on LYWSD03MMC, so the default 30% warning is intentionally permissive.

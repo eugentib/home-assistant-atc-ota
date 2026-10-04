@@ -19,8 +19,9 @@ def entity_suffix(address: str) -> str:
 
 
 class HomeAssistantPublisher:
-    def __init__(self, enabled: bool) -> None:
+    def __init__(self, enabled: bool, low_battery_threshold: int = 30) -> None:
         self.enabled = enabled
+        self.low_battery_threshold = max(1, min(100, int(low_battery_threshold)))
         self.token = os.environ.get("SUPERVISOR_TOKEN", "") if enabled else ""
         self.last_error: str | None = None
 
@@ -56,6 +57,9 @@ class HomeAssistantPublisher:
         )
         latest = item.get("latest") if isinstance(item.get("latest"), dict) else {}
         latest_version = latest.get("version") if latest else None
+        battery = item.get("battery_percent")
+        battery_numeric = battery if isinstance(battery, (int, float)) and not isinstance(battery, bool) else None
+        low_battery = battery_numeric is not None and battery_numeric <= self.low_battery_threshold
         common = {
             "device_name": name,
             "address": address,
@@ -69,6 +73,9 @@ class HomeAssistantPublisher:
             "latest_firmware": latest.get("filename") if latest else None,
             "update_available": item.get("update_available"),
             "rssi": item.get("rssi"),
+            "battery_percent": battery_numeric,
+            "low_battery": low_battery if battery_numeric is not None else None,
+            "low_battery_threshold": self.low_battery_threshold,
             "proxy": proxy_address,
             "last_seen": item.get("last_seen"),
             "last_info_refresh": item.get("last_info_refresh"),
@@ -84,6 +91,29 @@ class HomeAssistantPublisher:
                 "icon": "mdi:chip",
             },
         )
+        if battery_numeric is not None:
+            await self._set_state(
+                f"sensor.atc_ota_{suffix}_battery",
+                str(int(battery_numeric)),
+                {
+                    **common,
+                    "friendly_name": f"{name} battery",
+                    "icon": "mdi:battery",
+                    "device_class": "battery",
+                    "state_class": "measurement",
+                    "unit_of_measurement": "%",
+                },
+            )
+            await self._set_state(
+                f"binary_sensor.atc_ota_{suffix}_low_battery",
+                "on" if low_battery else "off",
+                {
+                    **common,
+                    "friendly_name": f"{name} low battery",
+                    "icon": "mdi:battery-alert",
+                },
+            )
+
         flag = item.get("update_available")
         update_state = "on" if flag is True else "off" if flag is False else "unknown"
         await self._set_state(
@@ -138,6 +168,12 @@ class HomeAssistantPublisher:
                             "latest": (d.get("latest") or {}).get("version")
                             if isinstance(d.get("latest"), dict)
                             else None,
+                            "battery_percent": d.get("battery_percent"),
+                            "low_battery": (
+                                isinstance(d.get("battery_percent"), (int, float))
+                                and not isinstance(d.get("battery_percent"), bool)
+                                and d.get("battery_percent") <= self.low_battery_threshold
+                            ),
                         }
                         for d in updatable
                     ],
