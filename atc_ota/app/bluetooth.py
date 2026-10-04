@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterable
 
 import habluetooth
 from bleak_esphome import APIConnectionManager
 
 _LOGGER = logging.getLogger(__name__)
+
+from .discovery import classify_atc
 
 
 @dataclass(slots=True)
@@ -85,13 +87,21 @@ class BluetoothProxyBridge:
             name = device.name or adv.local_name or ""
             address = device.address
             rssi = getattr(adv, "rssi", None)
-            candidate = _looks_like_atc(name)
+            service_uuids = [str(v).lower() for v in (getattr(adv, "service_uuids", None) or [])]
+            service_data = {
+                str(k).lower(): bytes(v)
+                for k, v in (getattr(adv, "service_data", None) or {}).items()
+            }
+            candidate, reason = classify_atc(name, service_uuids, service_data.keys())
             result.append(
                 {
                     "address": address,
                     "name": name or "(unnamed)",
                     "rssi": rssi,
                     "candidate": candidate,
+                    "candidate_reason": reason,
+                    "service_uuids": service_uuids,
+                    "service_data_uuids": list(service_data.keys()),
                 }
             )
 
@@ -103,17 +113,3 @@ class BluetoothProxyBridge:
             )
         )
         return result
-
-
-def _looks_like_atc(name: str) -> bool:
-    value = name.upper()
-    prefixes = (
-        "ATC_",
-        "LYWSD",
-        "MJWSD",
-        "MHO",
-        "CGG",
-        "CGDK",
-        "QINGPING",
-    )
-    return value.startswith(prefixes)

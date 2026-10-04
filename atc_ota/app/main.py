@@ -107,7 +107,7 @@ async def lifespan(_: FastAPI):
         await runtime.stop()
 
 
-app = FastAPI(title="ATC OTA over ESPHome", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="ATC OTA over ESPHome", version="0.1.1", lifespan=lifespan)
 
 
 @app.get("/", response_class=HTMLResponse)

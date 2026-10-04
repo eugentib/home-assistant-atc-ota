@@ -45,7 +45,7 @@ INDEX_HTML = r'''<!doctype html>
     <div id="scanInfo" class="muted">No scan yet.</div>
     <div style="overflow:auto">
       <table>
-        <thead><tr><th></th><th>Name</th><th>Address</th><th>RSSI</th></tr></thead>
+        <thead><tr><th></th><th>Name</th><th>Address</th><th>RSSI</th><th>Detected by</th></tr></thead>
         <tbody id="deviceRows"></tbody>
       </table>
     </div>
@@ -99,8 +99,9 @@ function renderDevices() {
       <td>${escapeHtml(d.name)}</td>
       <td>${escapeHtml(d.address)}</td>
       <td>${d.rssi ?? ''}</td>
+      <td>${escapeHtml(d.candidate_reason || '')}</td>
     </tr>`).join('');
-  byId('deviceRows').innerHTML = rows || '<tr><td colspan="4" class="muted">No matching devices.</td></tr>';
+  byId('deviceRows').innerHTML = rows || '<tr><td colspan="5" class="muted">No matching devices. Enable “Show all” to inspect every BLE advertisement.</td></tr>';
   document.querySelectorAll('input[name=device]').forEach(r => r.addEventListener('change', ev => {
     byId('target').value = ev.target.dataset.address;
   }));
