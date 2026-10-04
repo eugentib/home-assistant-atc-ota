@@ -1,0 +1,26 @@
+name: "ATC OTA over ESPHome"
+version: "0.1.0"
+slug: "atc_ota"
+description: "Update pvvx/ATC Telink thermometer firmware through an ESPHome Bluetooth Proxy"
+url: "https://github.com/eugentib/home-assistant-atc-ota"
+arch:
+  - amd64
+  - aarch64
+init: false
+startup: application
+boot: auto
+stage: experimental
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:thermometer-bluetooth
+panel_title: ATC OTA
+options:
+  proxy_address: "btproxy1.local."
+  proxy_noise_psk: ""
+  scan_seconds: 8
+  debug: false
+schema:
+  proxy_address: str
+  proxy_noise_psk: password
+  scan_seconds: int(3,30)
+  debug: bool
