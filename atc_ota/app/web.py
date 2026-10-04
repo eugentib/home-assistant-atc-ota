@@ -42,9 +42,19 @@ INDEX_HTML = r'''<!doctype html>
   <h1>ATC OTA over ESPHome</h1>
 
   <div class="card">
-    <h2>ESPHome Bluetooth Proxy</h2>
+    <div class="row">
+      <h2 class="grow">ESPHome Bluetooth Proxies</h2>
+      <button id="proxyRefreshBtn">Rediscover proxies</button>
+    </div>
     <div id="proxyStatus">Loading…</div>
-    <div id="haStatus" class="muted" style="margin-top:6px">Home Assistant publishing: loading…</div>
+    <div id="proxyDiscoveryNote" class="muted" style="margin-top:6px"></div>
+    <div style="overflow:auto; margin-top:8px">
+      <table>
+        <thead><tr><th>Name</th><th>Host</th><th>MAC</th><th>ESPHome</th><th>BT proxy</th><th>Runtime</th></tr></thead>
+        <tbody id="proxyRows"></tbody>
+      </table>
+    </div>
+    <div id="haStatus" class="muted" style="margin-top:8px">Home Assistant publishing: loading…</div>
   </div>
 
   <div class="card">
@@ -131,12 +141,46 @@ function mergeDevices(incoming) {
   });
 }
 
+function renderProxyRows(status) {
+  const discovered = status.proxy_discovery || [];
+  const runtime = status.proxy?.proxies || [];
+  const runtimeByEntry = new Map(runtime.filter(p => p.entry_id).map(p => [p.entry_id, p]));
+  const runtimeByHost = new Map(runtime.map(p => [String(p.address || '').toLowerCase(), p]));
+
+  let rows = discovered.map(p => {
+    const live = runtimeByEntry.get(p.entry_id) || runtimeByHost.get(String(p.host || '').toLowerCase());
+    const capability = p.usable
+      ? '<span class="ok">active GATT</span>'
+      : p.status === 'passive-only'
+        ? '<span class="warn">passive only</span>'
+        : p.status === 'not-bluetooth-proxy'
+          ? '<span class="muted">not a BT proxy</span>'
+          : `<span class="bad">${escapeHtml(p.status || 'unknown')}</span>`;
+    const liveStatus = live
+      ? (live.connected ? '<span class="ok">connected</span>' : `<span class="${live.status === 'error' ? 'bad' : 'muted'}">${escapeHtml(live.status || 'unknown')}</span>`)
+      : '<span class="muted">not selected</span>';
+    const title = p.error ? ` title="${escapeHtml(p.error)}"` : '';
+    return `<tr${title}><td>${escapeHtml(p.name || '')}</td><td>${escapeHtml(p.host || '')}</td><td>${escapeHtml(p.mac || p.bluetooth_mac || '')}</td><td>${escapeHtml(p.esphome_version || '')}</td><td>${capability}</td><td>${liveStatus}</td></tr>`;
+  });
+
+  if (!rows.length && runtime.length) {
+    rows = runtime.map(p => `<tr><td>${escapeHtml(p.name || '')}</td><td>${escapeHtml(p.address || '')}</td><td></td><td></td><td><span class="muted">manual</span></td><td>${p.connected ? '<span class="ok">connected</span>' : `<span class="${p.status === 'error' ? 'bad' : 'muted'}">${escapeHtml(p.status || '')}</span>`}</td></tr>`);
+  }
+  byId('proxyRows').innerHTML = rows.join('') || '<tr><td colspan="6" class="muted">No ESPHome nodes discovered yet.</td></tr>';
+}
+
 async function refreshStatus() {
   try {
     const r = await fetch(apiUrl('api/status'));
     const s = await r.json();
     const cls = s.proxy.connected ? 'ok' : (s.proxy.status === 'error' ? 'bad' : 'muted');
-    byId('proxyStatus').innerHTML = `<span class="${cls}"><b>${escapeHtml(s.proxy.status)}</b></span> — ${escapeHtml(s.proxy.address)}${s.proxy.error ? '<br><span class="bad">'+escapeHtml(s.proxy.error)+'</span>' : ''}`;
+    const mode = s.proxy_mode || s.proxy.mode || 'unknown';
+    const count = (s.proxy.proxies || []).filter(p => p.connected).length;
+    byId('proxyStatus').innerHTML = `<span class="${cls}"><b>${escapeHtml(s.proxy.status)}</b></span> — mode: <b>${escapeHtml(mode)}</b> — ${count} connected${s.proxy.address ? ' — '+escapeHtml(s.proxy.address) : ''}${s.proxy.error ? '<br><span class="bad">'+escapeHtml(s.proxy.error)+'</span>' : ''}`;
+    byId('proxyDiscoveryNote').innerHTML = s.proxy_discovery_error
+      ? `<span class="warn">Auto-discovery: ${escapeHtml(s.proxy_discovery_error)}</span>${mode.startsWith('manual') ? ' — using manual fallback.' : ''}`
+      : (s.auto_discover_proxies ? 'Automatic discovery is enabled. Only ESPHome nodes with Bluetooth Proxy active GATT support are selected.' : 'Automatic discovery is disabled; using manual configuration.');
+    renderProxyRows(s);
     const ha = s.home_assistant || {};
     if (!ha.publishing_enabled) {
       byId('haStatus').textContent = 'Home Assistant entities: disabled in app configuration';
@@ -268,6 +312,22 @@ async function selectDevice(address) {
 }
 
 byId('showAll').addEventListener('change', renderDevices);
+
+byId('proxyRefreshBtn').addEventListener('click', async () => {
+  const btn = byId('proxyRefreshBtn');
+  btn.disabled = true;
+  byId('proxyDiscoveryNote').textContent = 'Rediscovering ESPHome nodes and probing Bluetooth Proxy capabilities…';
+  try {
+    const r = await fetch(apiUrl('api/proxies/refresh'), {method:'POST'});
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || JSON.stringify(data));
+    await refreshStatus();
+  } catch(e) {
+    byId('proxyDiscoveryNote').innerHTML = `<span class="bad">${escapeHtml(String(e))}</span>`;
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 byId('scanBtn').addEventListener('click', async () => {
   const btn = byId('scanBtn');

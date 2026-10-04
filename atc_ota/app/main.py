@@ -28,6 +28,7 @@ from .ha_publish import HomeAssistantPublisher
 from .inventory import InventoryStore, normalize_address
 from .ota import flash_telink
 from .protocol import validate_firmware
+from .proxy_discovery import discover_home_assistant_proxies
 from .web import INDEX_HTML
 
 OPTIONS_FILE = Path(os.environ.get("ATC_OTA_OPTIONS", "/data/options.json"))
@@ -80,27 +81,89 @@ class Runtime:
         self.jobs: dict[str, Job] = {}
         self.ota_lock = asyncio.Lock()
         self.ble_lock = asyncio.Lock()
+        self.proxy_refresh_lock = asyncio.Lock()
         self.inventory = InventoryStore(INVENTORY_FILE)
         self.inventory_job = InventoryJob()
         self.inventory_task: asyncio.Task[None] | None = None
         self.maintenance_task: asyncio.Task[None] | None = None
         self.publisher = HomeAssistantPublisher(False)
+        self.proxy_discovery: list[dict[str, Any]] = []
+        self.proxy_discovery_error: str | None = None
+        self.proxy_mode = "not-started"
+
+    @property
+    def proxy_label(self) -> str:
+        if self.bridge is not None:
+            return self.bridge.label
+        return str(self.options.get("proxy_address", ""))
 
     async def start(self) -> None:
         self.options = load_options()
         configure_logging(bool(self.options.get("debug", False)))
 
-        address = str(self.options.get("proxy_address", "")).strip()
-        if not address:
-            raise RuntimeError("proxy_address is empty")
-        noise_psk = str(self.options.get("proxy_noise_psk", "")).strip() or None
-
         self.publisher = HomeAssistantPublisher(
             bool(self.options.get("publish_to_home_assistant", True))
         )
-        self.bridge = BluetoothProxyBridge(address, noise_psk)
-        await self.bridge.start()
+        await self.configure_proxies()
         self.maintenance_task = asyncio.create_task(self._maintenance_loop())
+
+    async def configure_proxies(self) -> None:
+        """Discover compatible ESPHome proxies, with manual config as a fallback."""
+        async with self.proxy_refresh_lock:
+            auto = bool(self.options.get("auto_discover_proxies", True))
+            configs: list[dict[str, Any]] = []
+            mode = "manual"
+            self.proxy_discovery = []
+            self.proxy_discovery_error = None
+
+            if auto:
+                discovered, discovery_error = await discover_home_assistant_proxies()
+                self.proxy_discovery = [item.public_dict() for item in discovered]
+                self.proxy_discovery_error = discovery_error
+                configs = [item.manager_config() for item in discovered if item.usable]
+                if configs:
+                    mode = "automatic"
+                    logging.info(
+                        "Automatically discovered %d usable ESPHome Bluetooth Proxy node(s): %s",
+                        len(configs),
+                        ", ".join(str(item.get("name") or item.get("address")) for item in configs),
+                    )
+
+            if not configs:
+                address = str(self.options.get("proxy_address", "")).strip()
+                noise_psk = str(self.options.get("proxy_noise_psk", "")).strip() or None
+                if not address:
+                    detail = self.proxy_discovery_error or "no usable ESPHome Bluetooth Proxy was found"
+                    raise RuntimeError(
+                        "Automatic Bluetooth Proxy discovery did not produce a usable proxy and "
+                        f"proxy_address is empty: {detail}"
+                    )
+                configs = [
+                    {
+                        "address": address,
+                        "noise_psk": noise_psk,
+                        "name": address,
+                        "entry_id": "manual",
+                    }
+                ]
+                mode = "manual-fallback" if auto else "manual"
+                if auto:
+                    logging.warning(
+                        "No automatically discovered active Bluetooth Proxy is usable; "
+                        "falling back to manual proxy %s%s",
+                        address,
+                        f" ({self.proxy_discovery_error})" if self.proxy_discovery_error else "",
+                    )
+
+            old_bridge = self.bridge
+            self.bridge = None
+            if old_bridge is not None:
+                await old_bridge.stop()
+
+            bridge = BluetoothProxyBridge(configs, mode=mode)
+            await bridge.start()
+            self.bridge = bridge
+            self.proxy_mode = mode
 
     async def stop(self) -> None:
         for task in (self.inventory_task, self.maintenance_task):
@@ -118,7 +181,7 @@ class Runtime:
             return
         await self.publisher.publish_inventory(
             self.inventory.all(),
-            self.bridge.state.address,
+            self.proxy_label,
             self.inventory.last_inventory_scan,
         )
 
@@ -132,7 +195,7 @@ class Runtime:
             logging.exception("Unable to refresh pvvx firmware catalog for cached inventory")
 
     async def _maintenance_loop(self) -> None:
-        # Let Home Assistant Core and the proxy finish starting before the first publish.
+        # Let Home Assistant Core and the proxies finish starting before the first publish.
         await asyncio.sleep(8)
         next_catalog_refresh = 0.0
         while True:
@@ -159,6 +222,7 @@ runtime = Runtime()
 
 def load_options() -> dict[str, Any]:
     defaults: dict[str, Any] = {
+        "auto_discover_proxies": True,
         "proxy_address": "btproxy1.local.",
         "proxy_noise_psk": "",
         "scan_seconds": 8,
@@ -194,7 +258,7 @@ async def lifespan(_: FastAPI):
         await runtime.stop()
 
 
-app = FastAPI(title="ATC OTA over ESPHome", version="0.1.3", lifespan=lifespan)
+app = FastAPI(title="ATC OTA over ESPHome", version="0.1.4", lifespan=lifespan)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -221,12 +285,38 @@ async def status() -> dict[str, Any]:
     return {
         "version": app.version,
         "proxy": proxy,
+        "proxy_mode": runtime.proxy_mode,
+        "auto_discover_proxies": bool(runtime.options.get("auto_discover_proxies", True)),
+        "proxy_discovery": runtime.proxy_discovery,
+        "proxy_discovery_error": runtime.proxy_discovery_error,
         "scan_seconds": runtime.options.get("scan_seconds", 8),
         "home_assistant": {
             "publishing_enabled": runtime.publisher.enabled,
             "api_available": runtime.publisher.available,
             "last_error": runtime.publisher.last_error,
         },
+    }
+
+
+@app.post("/api/proxies/refresh")
+async def refresh_proxies() -> dict[str, Any]:
+    if runtime.ota_lock.locked():
+        raise HTTPException(status_code=409, detail="Cannot rediscover proxies while OTA is running")
+    if runtime.inventory_task and not runtime.inventory_task.done():
+        raise HTTPException(status_code=409, detail="Cannot rediscover proxies while inventory refresh is running")
+    if runtime.ble_lock.locked():
+        raise HTTPException(status_code=409, detail="Cannot rediscover proxies while a BLE/GATT operation is active")
+    try:
+        await runtime.configure_proxies()
+    except Exception as exc:  # noqa: BLE001
+        logging.exception("ESPHome Bluetooth Proxy rediscovery failed")
+        raise HTTPException(status_code=503, detail=f"{type(exc).__name__}: {exc}") from exc
+    return {
+        "status": "ok",
+        "mode": runtime.proxy_mode,
+        "proxy": asdict(runtime.bridge.state) if runtime.bridge is not None else None,
+        "discovery": runtime.proxy_discovery,
+        "discovery_error": runtime.proxy_discovery_error,
     }
 
 
@@ -237,7 +327,7 @@ async def scan() -> dict[str, Any]:
     try:
         seconds = float(runtime.options.get("scan_seconds", 8))
         devices = await runtime.bridge.scan(seconds)
-        runtime.inventory.note_scan(devices, runtime.bridge.state.address)
+        runtime.inventory.note_scan(devices, runtime.proxy_label)
         runtime.inventory.save()
         devices = runtime.inventory.enriched_scan(devices)
     except Exception as exc:  # noqa: BLE001 - convert BLE stack errors to API detail
@@ -304,7 +394,7 @@ async def _read_and_cache_device(
     runtime.inventory.save()
     if runtime.bridge is not None:
         try:
-            await runtime.publisher.publish_device(entry, runtime.bridge.state.address)
+            await runtime.publisher.publish_device(entry, runtime.proxy_label)
         except Exception as exc:  # noqa: BLE001 - BLE success should not fail because HA publish failed
             runtime.publisher.last_error = f"{type(exc).__name__}: {exc}"
             logging.warning("Unable to publish device %s to Home Assistant: %s", address, exc)
@@ -324,7 +414,7 @@ async def _run_inventory_refresh() -> None:
         seconds = float(runtime.options.get("scan_seconds", 8))
         job.add(2, f"Scanning BLE advertisements for {seconds:g}s")
         scanned = await runtime.bridge.scan(seconds)
-        runtime.inventory.note_scan(scanned, runtime.bridge.state.address)
+        runtime.inventory.note_scan(scanned, runtime.proxy_label)
         runtime.inventory.save()
         candidates = runtime.inventory.candidates_seen_since(scan_started - 1)
         job.add(8, f"Found {len(candidates)} thermometer candidates; reading GATT information sequentially")

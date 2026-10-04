@@ -1,11 +1,14 @@
 # ATC OTA over ESPHome
 
-Experimental Home Assistant app/add-on for inventorying and updating pvvx/ATC Telink thermometers through an ESPHome Bluetooth Proxy.
+Experimental Home Assistant app/add-on for inventorying and updating pvvx/ATC Telink thermometers through ESPHome Bluetooth Proxies.
 
 Current features:
 
-- one ESPHome Bluetooth Proxy configured by address/IP;
-- optional ESPHome Native API encryption key;
+- automatic discovery of ESPHome devices already configured in Home Assistant;
+- automatic retrieval of their Native API encryption keys through the Home Assistant internal WebSocket API;
+- capability probing so only ESPHome nodes with Bluetooth Proxy **active GATT connections** are selected;
+- simultaneous registration of all usable proxies so `habluetooth` can route BLE connections through the best available scanner;
+- optional manual proxy address/encryption key fallback;
 - passive BLE scan through `bleak-esphome`;
 - persistent thermometer inventory with active GATT identification;
 - current firmware and hardware revision detection;
@@ -26,9 +29,15 @@ Then install **ATC OTA over ESPHome**.
 
 See `atc_ota/DOCS.md` for configuration and usage.
 
+## Automatic Bluetooth Proxy discovery
+
+Version `0.1.4` can use the ESPHome integrations already loaded in Home Assistant as its source of proxy configuration. It queries Home Assistant for ESPHome config entries and their API encryption keys, discovers the matching ESPHome Native API endpoints over mDNS, then probes `bluetooth_proxy_feature_flags` before enabling a node.
+
+All compatible proxies with active BLE connections are registered at once. The manual `proxy_address` / `proxy_noise_psk` settings remain as a fallback if automatic discovery cannot find a usable proxy.
+
 ## Home Assistant inventory entities
 
-Version `0.1.3` can publish:
+The app can publish:
 
 - one firmware sensor per cached thermometer;
 - one update-available binary sensor per cached thermometer;
@@ -38,7 +47,7 @@ The inventory itself is persisted in the app data directory and is republished a
 
 ## Status
 
-Version `0.1.3` remains experimental. Use it first on a thermometer that you can recover by SWire if necessary.
+Version `0.1.4` remains experimental. Use it first on a thermometer that you can recover by SWire if necessary.
 
 ## Upstream projects
 
@@ -47,5 +56,6 @@ This project interoperates with:
 - pvvx/ATC_MiThermometer
 - Bluetooth-Devices/bleak-esphome
 - ESPHome Bluetooth Proxy
+- Home Assistant
 
 No upstream firmware binaries are bundled in this repository.

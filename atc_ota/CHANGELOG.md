@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.4
+
+- Automatically discover ESPHome integrations already configured in Home Assistant.
+- Read each ESPHome Native API encryption key from Home Assistant instead of requiring it to be copied into the app configuration.
+- Match ESPHome config entries to live `_esphomelib._tcp.local.` mDNS services by MAC address.
+- Probe `bluetooth_proxy_feature_flags` and only auto-select nodes that support active BLE/GATT connections.
+- Register all usable Bluetooth Proxies simultaneously, allowing `habluetooth` to route GATT operations through the best available scanner.
+- Keep `proxy_address` and `proxy_noise_psk` as a manual fallback if automatic discovery is disabled or cannot find a usable proxy.
+- Add **Rediscover proxies** to the Ingress UI and show discovered node, capability, ESPHome version and runtime connection status.
+- Refuse proxy reconfiguration while an OTA or full inventory scan is active.
+
 ## 0.1.3
 
 - Add persistent device inventory in `/data/devices.json`.

@@ -3,25 +3,33 @@
 ## Requirements
 
 1. Home Assistant OS/Supervised with Apps/Add-ons support.
-2. An ESP32 running ESPHome with Bluetooth Proxy enabled and active connections available:
+2. At least one ESP32 running ESPHome with Bluetooth Proxy enabled and active connections available:
 
 ```yaml
 bluetooth_proxy:
   active: true
 ```
 
-3. The ESPHome Native API must be reachable from the Home Assistant app container.
+3. The ESPHome integration for the proxy should already be configured and loaded in Home Assistant for automatic discovery.
 4. The target thermometer must already run pvvx/ATC firmware exposing the Telink OTA service.
 
 ## Configuration
 
+### `auto_discover_proxies`
+
+Default: `true`.
+
+When enabled, the app asks Home Assistant for its loaded ESPHome integrations, obtains their Native API encryption keys through the internal Home Assistant WebSocket API, matches them with `_esphomelib._tcp.local.` mDNS services, and probes each ESPHome node.
+
+Only nodes reporting Bluetooth Proxy support with **active GATT connections** are used for thermometer reads and OTA. Multiple compatible proxies are registered simultaneously.
+
 ### `proxy_address`
 
-Address of the ESPHome proxy. Start with its IP address if `.local` name resolution does not work from the container. Example `192.168.1.45` or `btproxy1.local.`.
+Manual fallback address. It is only used when automatic discovery is disabled or when no automatically discovered proxy is usable. Example: `192.168.1.45` or `btproxy1.local.`.
 
 ### `proxy_noise_psk`
 
-If the ESPHome API uses encryption, paste the same `api.encryption.key` value here. Leave empty for an unencrypted API.
+Manual fallback ESPHome `api.encryption.key`. It is normally unnecessary when automatic discovery succeeds because the app obtains the stored key from Home Assistant. Leave empty for an unencrypted manual fallback API.
 
 ### `scan_seconds`
 
@@ -39,9 +47,23 @@ How often the app checks the upstream pvvx firmware catalog. This does not conne
 
 Enable verbose logging.
 
+## Bluetooth Proxy discovery
+
+The Web UI lists every loaded ESPHome node that could be matched and probed. Typical statuses are:
+
+- **active GATT** — selected and usable for OTA;
+- **passive only** — Bluetooth Proxy is present, but active connections are disabled;
+- **not a BT proxy** — ESPHome API is reachable but no Bluetooth Proxy feature flags are reported;
+- **not-found-mdns** — Home Assistant has the ESPHome integration but the app could not match it to a current mDNS endpoint;
+- **probe-failed** — endpoint/key/network probing failed.
+
+Use **Rediscover proxies** after adding/removing/reflashing an ESPHome proxy. The app will refuse to rebuild proxy connections while an OTA or full inventory pass is running.
+
+If automatic discovery fails, the configured manual proxy is kept as a fallback so an existing installation remains usable.
+
 ## Device inventory
 
-**Scan BLE** is passive and only listens for advertisements.
+**Scan BLE** is passive and only listens for advertisements through all connected proxies.
 
 **Read all candidates** first scans advertisements, then connects to every detected ATC/Xiaomi thermometer candidate one at a time. It reads and stores:
 
@@ -71,10 +93,10 @@ These are state-machine entities published by the app, not full Entity/Device Re
 ## Firmware update
 
 1. Start the app and open its Web UI.
-2. Wait for **Proxy connected**.
+2. Confirm that at least one proxy is shown as **connected / active GATT**.
 3. Run **Read all candidates**, or select one thermometer from a passive scan.
 4. Select a device.
-5. For LYWSD03MMC, press **Update to stable ...** to download the official upstream image and flash it through the configured proxy.
+5. For LYWSD03MMC, press **Update to stable ...** to download the official upstream image and flash it through the proxy selected by `habluetooth`.
 6. Manual `.bin` upload remains available as a fallback.
 
 The downloaded/uploaded image is validated for the Telink firmware marker (`KNLT`) before transmitting.
@@ -82,10 +104,11 @@ The downloaded/uploaded image is validated for the Telink firmware marker (`KNLT
 ## Important notes
 
 - Automatic upstream firmware selection is currently limited to LYWSD03MMC. Other supported Telink devices can still use manual `.bin` upload.
-- GATT device-info reads and OTA are serialized so they do not compete for an active BLE slot.
+- GATT device-info reads and OTA are serialized so they do not compete for active BLE slots.
+- With multiple ESPHome proxies, `habluetooth` chooses a connectable scanner based on the advertisements it has seen and available connection capacity; the app does not pin a thermometer to a specific proxy.
 - The target firmware must use the classic Telink OTA service:
   - Service: `00010203-0405-0607-0809-0a0b0c0d1912`
   - Characteristic: `00010203-0405-0607-0809-0a0b0c0d2b12`
-- If scanning works but GATT connection fails, confirm that the proxy has `bluetooth_proxy.active: true` and at least one free BLE connection slot.
+- If scanning works but GATT connection fails, confirm that at least one proxy has `bluetooth_proxy.active: true` and a free BLE connection slot.
 - Do not interrupt power to the thermometer during OTA.
 - This project remains experimental. Test first on a recoverable device.
