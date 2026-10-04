@@ -112,3 +112,7 @@ The downloaded/uploaded image is validated for the Telink firmware marker (`KNLT
 - If scanning works but GATT connection fails, confirm that at least one proxy has `bluetooth_proxy.active: true` and a free BLE connection slot.
 - Do not interrupt power to the thermometer during OTA.
 - This project remains experimental. Test first on a recoverable device.
+
+### Automatic proxy host resolution
+
+The app first queries Home Assistant for loaded ESPHome entries and their API encryption keys. It then resolves each node using, in order, ESPHome mDNS (when multicast is visible), the device registry `configuration_url`, and direct `<name>.local` candidates derived from Home Assistant names. Each candidate is verified against the expected ESPHome MAC before it is accepted. This avoids requiring multicast browsing inside the app container.

@@ -1,3 +1,10 @@
+## 0.1.5
+
+- Fix automatic ESPHome proxy discovery when multicast mDNS browsing is unavailable inside the Home Assistant app container.
+- Resolve hosts from Home Assistant device `configuration_url` and direct `<name>.local` candidates before falling back to manual configuration.
+- Verify the ESPHome API responder MAC before accepting a derived hostname.
+- Show how each proxy hostname was resolved.
+
 # Changelog
 
 ## 0.1.4

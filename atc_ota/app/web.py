@@ -50,7 +50,7 @@ INDEX_HTML = r'''<!doctype html>
     <div id="proxyDiscoveryNote" class="muted" style="margin-top:6px"></div>
     <div style="overflow:auto; margin-top:8px">
       <table>
-        <thead><tr><th>Name</th><th>Host</th><th>MAC</th><th>ESPHome</th><th>BT proxy</th><th>Runtime</th></tr></thead>
+        <thead><tr><th>Name</th><th>Host</th><th>Resolved via</th><th>MAC</th><th>ESPHome</th><th>BT proxy</th><th>Runtime</th></tr></thead>
         <tbody id="proxyRows"></tbody>
       </table>
     </div>
@@ -160,13 +160,13 @@ function renderProxyRows(status) {
       ? (live.connected ? '<span class="ok">connected</span>' : `<span class="${live.status === 'error' ? 'bad' : 'muted'}">${escapeHtml(live.status || 'unknown')}</span>`)
       : '<span class="muted">not selected</span>';
     const title = p.error ? ` title="${escapeHtml(p.error)}"` : '';
-    return `<tr${title}><td>${escapeHtml(p.name || '')}</td><td>${escapeHtml(p.host || '')}</td><td>${escapeHtml(p.mac || p.bluetooth_mac || '')}</td><td>${escapeHtml(p.esphome_version || '')}</td><td>${capability}</td><td>${liveStatus}</td></tr>`;
+    return `<tr${title}><td>${escapeHtml(p.name || '')}</td><td>${escapeHtml(p.host || '')}</td><td>${escapeHtml(p.resolved_via || '')}</td><td>${escapeHtml(p.mac || p.bluetooth_mac || '')}</td><td>${escapeHtml(p.esphome_version || '')}</td><td>${capability}</td><td>${liveStatus}</td></tr>`;
   });
 
   if (!rows.length && runtime.length) {
-    rows = runtime.map(p => `<tr><td>${escapeHtml(p.name || '')}</td><td>${escapeHtml(p.address || '')}</td><td></td><td></td><td><span class="muted">manual</span></td><td>${p.connected ? '<span class="ok">connected</span>' : `<span class="${p.status === 'error' ? 'bad' : 'muted'}">${escapeHtml(p.status || '')}</span>`}</td></tr>`);
+    rows = runtime.map(p => `<tr><td>${escapeHtml(p.name || '')}</td><td>${escapeHtml(p.address || '')}</td><td>manual config</td><td></td><td></td><td><span class="muted">manual</span></td><td>${p.connected ? '<span class="ok">connected</span>' : `<span class="${p.status === 'error' ? 'bad' : 'muted'}">${escapeHtml(p.status || '')}</span>`}</td></tr>`);
   }
-  byId('proxyRows').innerHTML = rows.join('') || '<tr><td colspan="6" class="muted">No ESPHome nodes discovered yet.</td></tr>';
+  byId('proxyRows').innerHTML = rows.join('') || '<tr><td colspan="7" class="muted">No ESPHome nodes discovered yet.</td></tr>';
 }
 
 async function refreshStatus() {

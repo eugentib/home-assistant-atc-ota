@@ -59,3 +59,7 @@ This project interoperates with:
 - Home Assistant
 
 No upstream firmware binaries are bundled in this repository.
+
+### Automatic proxy host resolution
+
+The app first queries Home Assistant for loaded ESPHome entries and their API encryption keys. It then resolves each node using, in order, ESPHome mDNS (when multicast is visible), the device registry `configuration_url`, and direct `<name>.local` candidates derived from Home Assistant names. Each candidate is verified against the expected ESPHome MAC before it is accepted. This avoids requiring multicast browsing inside the app container.
