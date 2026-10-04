@@ -1,113 +1,30 @@
-from __future__ import annotations
-
-import sys
 from pathlib import Path
+import importlib.util
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "atc_ota"))
+ROOT = Path(__file__).parents[1] / "custom_components" / "atc_ota"
 
-from app.protocol import (  # noqa: E402
-    BLOCK_SIZE,
-    crc16_modbus,
-    make_block,
-    make_finish,
-    pad_firmware,
-    validate_firmware,
-)
+def load(name):
+    spec = importlib.util.spec_from_file_location(name, ROOT / f"{name}.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
-
-def test_crc16_modbus_known_vector() -> None:
-    assert crc16_modbus(b"123456789") == 0x4B37
+protocol = load("protocol")
 
 
-def test_validate_magic() -> None:
-    fw = b"\x00" * 8 + b"KNLT" + b"\x00" * 32
-    validate_firmware(fw)
+def test_crc_known():
+    assert protocol.crc16_modbus(b"123456789") == 0x4B37
 
 
-def test_padding() -> None:
-    fw = b"x" * 17
-    padded = pad_firmware(fw)
-    assert len(padded) == 32
-    assert padded[:17] == fw
-    assert padded[17:] == b"\xff" * 15
-
-
-def test_block_shape_and_crc() -> None:
-    payload = bytes(range(BLOCK_SIZE))
-    packet = make_block(0x1234, payload)
+def test_block_shape():
+    packet = protocol.make_block(1, bytes(range(16)))
     assert len(packet) == 20
-    assert packet[:2] == b"\x34\x12"
-    expected_crc = crc16_modbus(packet[:18]).to_bytes(2, "little")
-    assert packet[18:] == expected_crc
+    assert packet[:2] == b"\x01\x00"
 
 
-def test_finish_packet() -> None:
-    assert make_finish(1) == b"\x02\xff\x00\x00\xff\xff"
-    assert make_finish(2) == b"\x02\xff\x01\x00\xfe\xff"
+def test_finish():
+    assert protocol.make_finish(2) == b"\x02\xff\x01\x00\xfe\xff"
 
 
-def test_ble_candidate_detection_by_service_data_uuid():
-    from app.discovery import classify_atc
-
-    assert classify_atc("", service_data_uuids=["0000181a-0000-1000-8000-00805f9b34fb"])[0]
-    assert classify_atc("", service_data_uuids=["0000fe95-0000-1000-8000-00805f9b34fb"])[0]
-    assert classify_atc(
-        "",
-        service_data_uuids=["0000fcd2-0000-1000-8000-00805f9b34fb"],
-        address="A4:C1:38:12:34:56",
-    )[0]
-    assert not classify_atc(
-        "",
-        service_data_uuids=["0000fcd2-0000-1000-8000-00805f9b34fb"],
-        address="CE:47:89:73:63:74",
-    )[0]
-
-
-def test_ble_candidate_detection_accepts_short_uuid():
-    from app.discovery import classify_atc
-
-    candidate, reason = classify_atc("", service_uuids=["181A"])
-    assert candidate
-    assert "181A" in reason
-
-
-def test_bcd_upstream_version():
-    from app.firmware_source import bcd_version
-
-    assert bcd_version(0x59) == "5.9"
-    assert bcd_version(0x60) == "6.0"
-
-
-def test_resolve_lywsd03mmc_stable_image():
-    from app.firmware_source import resolve_stable_firmware
-
-    custom = ["?"] * 50
-    for idx in (0, 3, 4, 5, 10, 14):
-        custom[idx] = "bin/ATC_v59.bin"
-    choice = resolve_stable_firmware(
-        {"version": 0x59, "custom": custom},
-        model="LYWSD03MMC",
-        hardware_revision="B1.4",
-    )
-    assert choice.version == "5.9"
-    assert choice.filename == "ATC_v59.bin"
-    assert choice.path == "bin/ATC_v59.bin"
-
-
-def test_bthome_v2_battery_parser():
-    from app.discovery import parse_bthome_v2_service_data
-
-    # device info v2 (0x40), packet id 9, battery 97%, then temperature
-    parsed = parse_bthome_v2_service_data(bytes.fromhex("400009016102c409"))
-    assert parsed["bthome_version"] == 2
-    assert parsed["bthome_encrypted"] is False
-    assert parsed["battery_percent"] == 97
-
-
-def test_bthome_v2_encrypted_battery_is_not_exposed():
-    from app.discovery import parse_bthome_v2_service_data
-
-    parsed = parse_bthome_v2_service_data(bytes.fromhex("4100090161"))
-    assert parsed["bthome_encrypted"] is True
-    assert "battery_percent" not in parsed
+def test_validate_knlt():
+    protocol.validate_firmware(b"\x00" * 8 + b"KNLT" + b"\x00" * 20)

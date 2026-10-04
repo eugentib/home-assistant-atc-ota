@@ -1,0 +1,31 @@
+{
+  "title": "ATC OTA",
+  "config": {
+    "step": {
+      "user": {
+        "title": "ATC OTA",
+        "description": "Configurează administrarea firmware-ului pentru termometre pvvx/ATC folosind stiva Bluetooth comună din Home Assistant."
+      },
+      "bluetooth_confirm": {
+        "title": "ATC OTA detectat",
+        "description": "A fost detectat un termometru compatibil ({name}). Adaugi ATC OTA pentru administrarea automată a dispozitivelor compatibile?"
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "ATC OTA este deja configurat.",
+      "not_supported": "Acest dispozitiv BTHome/BLE nu pare un termometru ATC/pvvx compatibil."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opțiuni ATC OTA",
+        "data": {
+          "low_battery_threshold": "Prag avertizare baterie pentru OTA (%)",
+          "auto_probe_metadata": "Citește automat metadatele firmware pentru dispozitivele nou detectate",
+          "auto_probe_min_rssi": "RSSI minim pentru citirea automată a metadatelor (dBm)"
+        }
+      }
+    }
+  }
+}

@@ -1,80 +1,93 @@
-# ATC OTA over ESPHome
+# ATC OTA for Home Assistant — v0.2.0
 
-Experimental Home Assistant app/add-on for inventorying and updating pvvx/ATC Telink thermometers through ESPHome Bluetooth Proxies.
+A Home Assistant custom integration for pvvx/ATC Telink thermometers such as **LYWSD03MMC**.
 
-Current features:
+## Why v0.2.0 is different
 
-- automatic discovery of ESPHome devices already configured in Home Assistant;
-- automatic retrieval of their Native API encryption keys through the Home Assistant internal WebSocket API;
-- capability probing so only ESPHome nodes with Bluetooth Proxy **active GATT connections** are selected;
-- simultaneous registration of all usable proxies so `habluetooth` can route BLE connections through the best available scanner;
-- optional manual proxy address/encryption key fallback;
-- passive BLE scan through `bleak-esphome`;
-- persistent thermometer inventory with active GATT identification;
-- current firmware, hardware revision and standard GATT battery-level detection;
-- pvvx stable firmware lookup and update-available detection;
-- Home Assistant state sensors for current firmware, battery level, low-battery state and available updates;
-- one-click official pvvx firmware download for LYWSD03MMC;
-- manual Telink `.bin` upload fallback;
-- configurable low-battery OTA warning (default 30%) with a fresh battery read immediately before flashing;
-- pvvx-compatible Telink OTA;
-- Home Assistant Ingress web UI with progress and logs.
+v0.1.x was a Home Assistant app/add-on that opened its own ESPHome API subscriptions to Bluetooth Proxy nodes. v0.2.0 is a **custom integration inside Home Assistant Core** and uses Home Assistant's existing Bluetooth manager instead.
 
-## Install from GitHub
+That means:
 
-Add this repository URL to the Home Assistant Apps/Add-ons store:
+- no `proxy_address`;
+- no ESPHome encryption key handling;
+- no direct/parallel subscription to ESPHome Bluetooth Proxy nodes;
+- no separate Bleak scanner;
+- advertisements, proxy selection and connection slots remain owned by Home Assistant;
+- OTA uses the same `BLEDevice` routing Home Assistant gives other Bluetooth integrations.
 
-`https://github.com/eugentib/home-assistant-atc-ota`
+## Features
 
-Then install **ATC OTA over ESPHome**.
+- automatic discovery of likely pvvx/ATC thermometers;
+- passive BTHome v2 battery reading;
+- strongest RSSI/proxy observation from Home Assistant's scanner history;
+- GATT read of device name, model, hardware and current firmware version;
+- pvvx stable firmware catalog lookup;
+- native Home Assistant `update.*` firmware entity with progress;
+- battery sensor and low-battery binary sensor;
+- per-device **Refresh firmware info** button;
+- configurable low-battery threshold (default 30%);
+- if battery is low, first Install attempt is rejected and asks for a second Install within 60 seconds to confirm;
+- serialized metadata reads and OTA jobs;
+- all GATT clients disconnect in `finally` blocks.
 
-See `atc_ota/DOCS.md` for configuration and usage.
+## Migration from v0.1.x
 
-## Automatic Bluetooth Proxy discovery
+**Stop the old ATC OTA app/add-on before enabling v0.2.0.** The old app should not run alongside this integration.
 
-Version `0.1.7` can use the ESPHome integrations already loaded in Home Assistant as its source of proxy configuration. It queries Home Assistant for ESPHome config entries and their API encryption keys, discovers the matching ESPHome Native API endpoints over mDNS, then probes `bluetooth_proxy_feature_flags` before enabling a node.
+The add-on inventory cannot be imported automatically because app `/data` is isolated from Home Assistant Core. Devices are re-discovered from Home Assistant's Bluetooth history and advertisements.
 
-All compatible proxies with active BLE connections are registered at once. The manual `proxy_address` / `proxy_noise_psk` settings remain as a fallback if automatic discovery cannot find a usable proxy.
+## Manual installation
 
-Proxy discovery runs in the background, so the Ingress Web UI becomes available immediately after the app starts. Version `0.1.7` also caches the last-known-good proxy set in `/data/proxies.json`; on later restarts those proxies are started first and the slower Home Assistant/DNS reconciliation happens in the background. The proxy table and status update automatically while discovery is still running.
+Copy:
 
-## Home Assistant inventory entities
+```text
+custom_components/atc_ota/
+```
 
-The app can publish:
+into:
 
-- one firmware sensor per cached thermometer;
-- one update-available binary sensor per cached thermometer;
-- a summary sensor with the number and list of updatable thermometers.
+```text
+/config/custom_components/atc_ota/
+```
 
-The inventory itself is persisted in the app data directory and is republished after app startup and periodically thereafter.
+Then restart Home Assistant Core and open:
 
-## Status
+**Settings → Devices & services → Add integration → ATC OTA**
 
-Version `0.1.11` remains experimental. Use it first on a thermometer that you can recover by SWire if necessary.
+The integration may also appear automatically as a discovered integration when a matching thermometer advertises.
 
-## Upstream projects
+## HACS custom repository
 
-This project interoperates with:
+After pushing this repository to GitHub, add it to HACS as a **Custom repository → Integration**, then install **ATC OTA** and restart Home Assistant.
 
-- pvvx/ATC_MiThermometer
-- Bluetooth-Devices/bleak-esphome
-- ESPHome Bluetooth Proxy
-- Home Assistant
+## Entities per thermometer
 
-No upstream firmware binaries are bundled in this repository.
+Typical entities:
 
-### Automatic proxy host resolution
+```text
+update.test1_firmware
+sensor.test1_battery
+sensor.test1_bluetooth_rssi
+binary_sensor.test1_low_battery
+button.test1_refresh_firmware_info
+```
 
-The app first queries Home Assistant for loaded ESPHome entries and their API encryption keys. It then resolves each node using, in order, ESPHome mDNS (when multicast is visible), the device registry `configuration_url`, and direct `<name>.local` candidates derived from Home Assistant names. Each candidate is verified against the expected ESPHome MAC before it is accepted. This avoids requiring multicast browsing inside the app container.
+The update entity reports installed/latest versions, OTA progress, battery, strongest RSSI/proxy and the last metadata error.
 
+## Battery safety
 
-### Bluetooth proxy provenance
+The default warning threshold is **30%** and can be changed under the integration's Options. If battery is at/below the threshold, the first update attempt is intentionally rejected. A second Install within 60 seconds confirms that the user wants to proceed despite the warning.
 
-The BLE table distinguishes the advertisement **Format** (for example BTHome v2 / 0xFCD2) from the actual ESPHome **Best proxy** used by habluetooth. When supported by the installed habluetooth version, **Seen by** also lists every proxy that heard the device with its RSSI.
+## Bluetooth architecture
 
+```text
+ESPHome Bluetooth Proxy ─┐
+ESPHome Bluetooth Proxy ─┼─> Home Assistant Bluetooth manager ─> ATC OTA
+local Bluetooth adapter ─┘
+```
 
-### Battery preflight
+ATC OTA never creates an ESPHome API connection itself.
 
-Version `0.1.11` reads battery primarily from unencrypted BTHome v2 (`0xFCD2`) advertisements (object `0x01`) and retains the standard GATT Battery Level (`0x2A19`) as a fallback during device-info reads. Because pvvx may transmit battery in a separate BTHome packet, the scan callback keeps any battery packet observed during the entire scan window instead of looking only at the final advertisement. The value is stored in the inventory, shown in the UI, and published to Home Assistant. Before OTA, cached/passively refreshed battery data is used first; if the battery is at or below `low_battery_warning_percent` (default `30`), the UI requires explicit confirmation.
+## Current scope
 
-The threshold is configurable. Note that the upstream pvvx documentation recommends **more than 40%** battery for reliable connection/reflashing on LYWSD03MMC, so the default 30% warning is intentionally permissive.
+Automatic upstream firmware selection is intentionally limited to verified **LYWSD03MMC** mappings. The classic Telink OTA framing remains compatible with the pvvx OTA service used by the v0.1.x prototype.

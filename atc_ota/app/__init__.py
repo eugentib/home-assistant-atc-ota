@@ -1,1 +1,0 @@
-"""ATC OTA over ESPHome."""

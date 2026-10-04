@@ -1,0 +1,31 @@
+{
+  "title": "ATC OTA",
+  "config": {
+    "step": {
+      "user": {
+        "title": "ATC OTA",
+        "description": "Set up firmware management for pvvx/ATC thermometers using Home Assistant's shared Bluetooth stack."
+      },
+      "bluetooth_confirm": {
+        "title": "ATC OTA discovered",
+        "description": "A compatible thermometer ({name}) was discovered. Add ATC OTA to manage compatible devices automatically?"
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "ATC OTA is already configured.",
+      "not_supported": "This BTHome/BLE device does not look like a supported ATC/pvvx thermometer."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "ATC OTA options",
+        "data": {
+          "low_battery_threshold": "Low battery OTA warning threshold (%)",
+          "auto_probe_metadata": "Automatically read firmware metadata for newly discovered devices",
+          "auto_probe_min_rssi": "Minimum RSSI for automatic metadata read (dBm)"
+        }
+      }
+    }
+  }
+}

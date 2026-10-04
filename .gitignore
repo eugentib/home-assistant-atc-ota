@@ -4,5 +4,3 @@ __pycache__/
 .venv/
 .vscode/
 .idea/
-.DS_Store
-*.zip
