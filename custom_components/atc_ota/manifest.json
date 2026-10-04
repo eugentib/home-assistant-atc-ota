@@ -1,7 +1,7 @@
 {
   "domain": "atc_ota",
   "name": "ATC OTA",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "config_flow": true,
   "dependencies": [
     "bluetooth",
@@ -10,9 +10,7 @@
   "documentation": "https://github.com/eugentib/home-assistant-atc-ota",
   "issue_tracker": "https://github.com/eugentib/home-assistant-atc-ota/issues",
   "iot_class": "local_push",
-  "requirements": [
-    "bleak-retry-connector==4.7.1"
-  ],
+  "requirements": [],
   "codeowners": [
     "@eugentib"
   ],
