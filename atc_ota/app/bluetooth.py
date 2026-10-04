@@ -16,11 +16,21 @@ from .discovery import classify_atc
 _LOGGER = logging.getLogger(__name__)
 
 
+def _norm_mac(value: str | None) -> str:
+    if not value:
+        return ""
+    chars = "".join(ch for ch in str(value).upper() if ch in "0123456789ABCDEF")
+    if len(chars) == 12:
+        return ":".join(chars[i : i + 2] for i in range(0, 12, 2))
+    return str(value).upper()
+
+
 @dataclass(slots=True)
 class ProxyRuntimeState:
     address: str
     name: str = ""
     entry_id: str = ""
+    bluetooth_mac: str = ""
     connected: bool = False
     status: str = "starting"
     error: str | None = None
@@ -51,8 +61,6 @@ class BluetoothProxyBridge:
 
     async def start(self) -> None:
         """Initialize habluetooth and start every configured ESPHome proxy."""
-        # Route normal Bleak calls (scanner + client) through habluetooth.
-        # APIConnectionManager registers each ESPHome scanner in this global manager.
         import bleak
 
         bleak.BleakClient = HaBleakClientWrapper  # type: ignore[assignment]
@@ -72,6 +80,7 @@ class BluetoothProxyBridge:
                 address=address,
                 name=str(cfg.get("name") or address),
                 entry_id=str(cfg.get("entry_id") or ""),
+                bluetooth_mac=_norm_mac(str(cfg.get("bluetooth_mac") or "")),
             )
             manager = APIConnectionManager(
                 {
@@ -86,7 +95,6 @@ class BluetoothProxyBridge:
         if not self._tasks:
             raise RuntimeError("No valid ESPHome Bluetooth Proxy addresses were configured")
 
-        # Give fast local proxies a moment to become available without blocking startup for long.
         await asyncio.sleep(0.25)
         self._refresh_state()
 
@@ -160,8 +168,78 @@ class BluetoothProxyBridge:
         names = [item.name for item in self._states if item.connected]
         return ", ".join(names) if names else self.state.address
 
+    def _proxy_name_for_source(self, source: str) -> str:
+        """Map habluetooth scanner source (BLE MAC) to our ESPHome friendly name."""
+        source = _norm_mac(source)
+        if not source:
+            return ""
+        for state in self._states:
+            if state.bluetooth_mac and _norm_mac(state.bluetooth_mac) == source:
+                return state.name
+        return source
+
+    @staticmethod
+    def _device_source(device: Any) -> str:
+        """Extract the scanner source selected by habluetooth for a BLEDevice."""
+        details = getattr(device, "details", None)
+        if isinstance(details, dict):
+            source = details.get("source")
+            if source:
+                return _norm_mac(str(source))
+        # Be defensive against wrapper/backend changes that expose details as an object.
+        source = getattr(details, "source", None)
+        return _norm_mac(str(source)) if source else ""
+
+    def _scanner_observations(self) -> dict[str, list[dict[str, Any]]]:
+        """Return per-device RSSI observations from every registered remote scanner.
+
+        The normal Bleak view is arbitrated by habluetooth and exposes one best
+        advertisement per BLE address.  The registered scanner objects retain
+        their own discovered-device maps, so we can show which ESPHome proxies
+        actually heard the device and at what RSSI.
+        """
+        observations: dict[str, list[dict[str, Any]]] = {}
+        if self._bt_manager is None:
+            return observations
+        try:
+            scanners = self._bt_manager.async_current_scanners()
+        except Exception:  # noqa: BLE001 - diagnostics are best effort
+            _LOGGER.debug("Unable to enumerate habluetooth scanners", exc_info=True)
+            return observations
+
+        for scanner in scanners or []:
+            source = _norm_mac(str(getattr(scanner, "source", "") or ""))
+            scanner_name = self._proxy_name_for_source(source)
+            try:
+                discovered = getattr(scanner, "discovered_devices_and_advertisement_data", {})
+                if callable(discovered):
+                    discovered = discovered()
+                values = discovered.values() if isinstance(discovered, dict) else discovered
+                for pair in values or []:
+                    try:
+                        device, adv = pair
+                    except (TypeError, ValueError):
+                        continue
+                    address = _norm_mac(str(getattr(device, "address", "") or ""))
+                    if not address:
+                        continue
+                    rssi = getattr(adv, "rssi", None)
+                    observations.setdefault(address, []).append(
+                        {
+                            "source": source,
+                            "proxy": scanner_name or source,
+                            "rssi": rssi,
+                        }
+                    )
+            except Exception:  # noqa: BLE001
+                _LOGGER.debug("Unable to inspect scanner %s", scanner_name or source, exc_info=True)
+
+        for rows in observations.values():
+            rows.sort(key=lambda row: row.get("rssi") if isinstance(row.get("rssi"), int) else -999, reverse=True)
+        return observations
+
     async def scan(self, timeout: float) -> list[dict[str, Any]]:
-        """Return BLE devices heard by any connected configured proxy."""
+        """Return BLE devices heard by connected proxies, including proxy provenance."""
         self._refresh_state()
         if not self.state.connected:
             raise RuntimeError(
@@ -171,10 +249,12 @@ class BluetoothProxyBridge:
         import bleak
 
         discovered = await bleak.BleakScanner.discover(timeout=timeout, return_adv=True)
+        per_source = self._scanner_observations()
         result: list[dict[str, Any]] = []
         for device, adv in discovered.values():
             name = device.name or adv.local_name or ""
             address = device.address
+            norm_address = _norm_mac(address)
             rssi = getattr(adv, "rssi", None)
             service_uuids = [str(v).lower() for v in (getattr(adv, "service_uuids", None) or [])]
             service_data = {
@@ -182,15 +262,28 @@ class BluetoothProxyBridge:
                 for k, v in (getattr(adv, "service_data", None) or {}).items()
             }
             candidate, reason = classify_atc(name, service_uuids, service_data.keys())
+
+            selected_source = self._device_source(device)
+            seen_by = per_source.get(norm_address, [])
+            if not selected_source and seen_by:
+                selected_source = str(seen_by[0].get("source") or "")
+            best_proxy = self._proxy_name_for_source(selected_source)
+            if not best_proxy and seen_by:
+                best_proxy = str(seen_by[0].get("proxy") or "")
+
             result.append(
                 {
                     "address": address,
                     "name": name or "(unnamed)",
                     "rssi": rssi,
                     "candidate": candidate,
+                    # This describes the advertisement format/signature, not the proxy.
                     "candidate_reason": reason,
                     "service_uuids": service_uuids,
                     "service_data_uuids": list(service_data.keys()),
+                    "source": selected_source,
+                    "best_proxy": best_proxy,
+                    "seen_by": seen_by,
                 }
             )
 

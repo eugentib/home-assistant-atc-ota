@@ -67,7 +67,7 @@ INDEX_HTML = r'''<!doctype html>
     <div id="scanInfo" class="muted">Loading saved inventory…</div>
     <div style="overflow:auto">
       <table>
-        <thead><tr><th></th><th>Name</th><th>Model</th><th>Address</th><th>RSSI</th><th>HW</th><th>Current</th><th>Latest</th><th>Update</th><th>Detected by</th></tr></thead>
+        <thead><tr><th></th><th>Name</th><th>Model</th><th>Address</th><th>RSSI</th><th>HW</th><th>Current</th><th>Latest</th><th>Update</th><th>Best proxy</th><th>Seen by</th><th>Format</th></tr></thead>
         <tbody id="deviceRows"></tbody>
       </table>
     </div>
@@ -200,6 +200,16 @@ async function refreshStatus() {
   }
 }
 
+
+function formatSeenBy(rows) {
+  if (!Array.isArray(rows) || !rows.length) return '';
+  return rows.map(item => {
+    const proxy = item.proxy || item.source || '?';
+    const rssi = Number.isFinite(item.rssi) ? ` ${item.rssi} dBm` : '';
+    return `${proxy}${rssi}`;
+  }).join(', ');
+}
+
 function renderDevices() {
   const showAll = byId('showAll').checked;
   const visible = devices.filter(d => showAll || d.candidate || d.model);
@@ -221,10 +231,12 @@ function renderDevices() {
       <td>${escapeHtml(d.current_version || '')}</td>
       <td>${escapeHtml(d.latest?.version || '')}</td>
       <td>${update}</td>
+      <td>${escapeHtml(d.best_proxy || '')}</td>
+      <td>${escapeHtml(formatSeenBy(d.seen_by || []))}</td>
       <td>${escapeHtml(d.candidate_reason || '')}</td>
     </tr>`;
   }).join('');
-  byId('deviceRows').innerHTML = rows || '<tr><td colspan="10" class="muted">No matching devices. Enable “Show all” to inspect every BLE advertisement.</td></tr>';
+  byId('deviceRows').innerHTML = rows || '<tr><td colspan="12" class="muted">No matching devices. Enable “Show all” to inspect every BLE advertisement.</td></tr>';
   document.querySelectorAll('input[name=device]').forEach(r => r.addEventListener('change', ev => selectDevice(ev.target.dataset.address)));
 }
 

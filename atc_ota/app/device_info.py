@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 _LOGGER = logging.getLogger(__name__)
+_VERSION_TEXT_RE = re.compile(r"^V?\d+(?:\.\d+){1,2}(?:[-+._a-zA-Z0-9]*)?$")
 
 UUID_DEVICE_NAME = "00002a00-0000-1000-8000-00805f9b34fb"
 UUID_MODEL_NUMBER = "00002a24-0000-1000-8000-00805f9b34fb"
@@ -57,9 +59,15 @@ async def read_device_info(address: str) -> dict[str, Any]:
         software_revision = await _read_text(client, UUID_SOFTWARE_REV)
         manufacturer = await _read_text(client, UUID_MANUFACTURER)
 
-        # pvvx uses the Software Revision String for the actual release version
-        # (for example V5.9), while Firmware Revision commonly contains github.com/pvvx.
-        current_version = software_revision or firmware_revision
+        # Most pvvx releases put the release in Software Revision and the
+        # project identifier in Firmware Revision.  Some builds expose those
+        # strings in the opposite characteristics, so prefer whichever value
+        # actually looks like a version instead of blindly trusting one UUID.
+        revisions = [software_revision, firmware_revision]
+        current_version = next(
+            (value for value in revisions if value and _VERSION_TEXT_RE.match(value.strip())),
+            software_revision or firmware_revision,
+        )
 
         return {
             "address": address,

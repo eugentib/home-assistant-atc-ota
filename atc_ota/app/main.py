@@ -163,6 +163,7 @@ class Runtime:
                 "noise_psk": item.get("noise_psk") or None,
                 "name": str(item.get("name") or address),
                 "entry_id": str(item.get("entry_id") or ""),
+                "bluetooth_mac": str(item.get("bluetooth_mac") or ""),
             })
         return clean
 
@@ -414,7 +415,7 @@ async def lifespan(_: FastAPI):
         await runtime.stop()
 
 
-app = FastAPI(title="ATC OTA over ESPHome", version="0.1.7", lifespan=lifespan)
+app = FastAPI(title="ATC OTA over ESPHome", version="0.1.8", lifespan=lifespan)
 
 
 @app.get("/", response_class=HTMLResponse)

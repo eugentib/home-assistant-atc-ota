@@ -70,6 +70,9 @@ class DiscoveredProxy:
             "noise_psk": self.noise_psk or None,
             "name": self.name,
             "entry_id": self.entry_id,
+            # habluetooth identifies a remote scanner by the ESP32 BLE MAC,
+            # which is normally different from the ESPHome/Wi-Fi MAC.
+            "bluetooth_mac": normalize_mac(self.bluetooth_mac),
         }
 
 

@@ -97,6 +97,9 @@ class InventoryStore:
                     "service_uuids": item.get("service_uuids", []),
                     "service_data_uuids": item.get("service_data_uuids", []),
                     "proxy_address": proxy_address,
+                    "source": item.get("source"),
+                    "best_proxy": item.get("best_proxy"),
+                    "seen_by": item.get("seen_by", []),
                     "last_seen": now,
                 }
             )

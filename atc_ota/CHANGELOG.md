@@ -1,5 +1,13 @@
 ## 0.1.7
 
+## 0.1.8
+
+- Rename the BLE table's misleading `Detected by` column to `Format`.
+- Show the actual ESPHome proxy selected by habluetooth for each BLE device.
+- Show all connected proxies that heard a device and their per-proxy RSSI when available.
+- Persist BLE scanner provenance in the device inventory.
+- Make pvvx current-version detection tolerant of swapped Firmware/Software Revision strings.
+
 - Cache the last-known-good auto-discovered ESPHome Bluetooth Proxy configuration in `/data/proxies.json`.
 - Start cached proxy connections immediately on restart, while Home Assistant discovery/probing reconciles in the background.
 - Keep working cached proxies if a transient discovery/DNS failure cannot confirm a replacement.
