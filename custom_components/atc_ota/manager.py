@@ -31,7 +31,8 @@ from .const import (
     DEFAULT_LOW_BATTERY_THRESHOLD,
     DOMAIN,
     ENV_SENSING_UUID,
-    LOW_BATTERY_CONFIRM_SECONDS,
+    OTA_BATTERY_MAX_AGE_SECONDS,
+    OTA_BATTERY_SCAN_SECONDS,
     METADATA_RETRY_SECONDS,
     OTA_CHAR_UUID,
     STORAGE_KEY,
@@ -93,6 +94,7 @@ class DeviceState:
     latest_version: str | None = None
     latest_filename: str | None = None
     battery: int | None = None
+    battery_last_seen: float | None = None
     rssi: int | None = None
     strongest_proxy: str | None = None
     last_seen: float | None = None
@@ -101,11 +103,10 @@ class DeviceState:
     ota_in_progress: bool = False
     ota_progress: int | None = None
     ota_message: str | None = None
-    _confirm_until: float = field(default=0.0, repr=False)
 
     def persistent(self) -> dict[str, Any]:
         data = asdict(self)
-        for key in ("ota_in_progress", "ota_progress", "ota_message", "_confirm_until"):
+        for key in ("ota_in_progress", "ota_progress", "ota_message"):
             data.pop(key, None)
         return data
 
@@ -247,6 +248,7 @@ class AtcManager:
             parsed = parse_bthome_v2(bthome)
             if parsed.battery is not None:
                 state.battery = parsed.battery
+                state.battery_last_seen = time.time()
             if parsed.firmware_version and not state.current_version:
                 state.current_version = normalize_version(parsed.firmware_version)
 
@@ -492,6 +494,7 @@ class AtcManager:
                 state.manufacturer = manufacturer or state.manufacturer
                 if battery is not None:
                     state.battery = battery
+                    state.battery_last_seen = time.time()
 
                 revisions = [sw, fw]
                 current = next(
@@ -536,22 +539,40 @@ class AtcManager:
             if state.ota_in_progress:
                 raise HomeAssistantError("An OTA update is already in progress for this device")
 
-            # Refresh advertisements so BTHome battery/RSSI are recent without a GATT connection.
-            try:
-                await self.async_request_scan(3.0)
-            except Exception as exc:  # noqa: BLE001
-                _LOGGER.debug("Pre-OTA active scan failed: %s", exc)
+            # OTA safety gate: require a recent battery value before any flash starts.
+            # pvvx can advertise the battery in a separate BTHome packet, so an old
+            # cached value (or no value at all) is not enough.  Request an active
+            # scan and require the battery timestamp to be recent afterwards.
+            now = time.time()
+            battery_fresh = (
+                state.battery is not None
+                and state.battery_last_seen is not None
+                and now - state.battery_last_seen <= OTA_BATTERY_MAX_AGE_SECONDS
+            )
+            if not battery_fresh:
+                try:
+                    await self.async_request_scan(float(OTA_BATTERY_SCAN_SECONDS))
+                except Exception as exc:  # noqa: BLE001
+                    _LOGGER.debug("Pre-OTA battery scan failed: %s", exc)
 
-            if state.battery is not None and state.battery <= self.low_battery_threshold:
-                now = time.monotonic()
-                if now > state._confirm_until:
-                    state._confirm_until = now + LOW_BATTERY_CONFIRM_SECONDS
-                    self._notify(address)
-                    raise HomeAssistantError(
-                        f"Battery is only {state.battery}% (threshold {self.low_battery_threshold}%). "
-                        "Press Install again within 60 seconds to confirm the OTA anyway."
-                    )
-                state._confirm_until = 0.0
+            now = time.time()
+            battery_fresh = (
+                state.battery is not None
+                and state.battery_last_seen is not None
+                and now - state.battery_last_seen <= OTA_BATTERY_MAX_AGE_SECONDS
+            )
+            if not battery_fresh:
+                raise HomeAssistantError(
+                    "OTA refused because a recent battery level could not be obtained. "
+                    "Wait for a BTHome battery advertisement and try again."
+                )
+
+            if state.battery <= self.low_battery_threshold:
+                raise HomeAssistantError(
+                    f"OTA refused: battery is {state.battery}% and the configured minimum is "
+                    f"{self.low_battery_threshold}%. Change the ATC OTA option only if you "
+                    "intentionally want to accept the risk."
+                )
 
             if not state.model or not state.hardware_revision or not state.current_version:
                 await self.async_refresh_device(address)

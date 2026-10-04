@@ -33,6 +33,7 @@ class AtcFirmwareUpdate(AtcOtaEntity, UpdateEntity):
         UpdateEntityFeature.INSTALL | UpdateEntityFeature.PROGRESS | UpdateEntityFeature.RELEASE_NOTES
     )
     _attr_release_url = PVVX_REPO_URL
+    _attr_auto_update = False
 
     def __init__(self, manager, address: str) -> None:
         super().__init__(manager, address)
@@ -60,8 +61,8 @@ class AtcFirmwareUpdate(AtcOtaEntity, UpdateEntity):
         battery = "unknown" if state.battery is None else f"{state.battery}%"
         if state.battery is not None and state.battery <= self.manager.low_battery_threshold:
             return (
-                f"WARNING: battery {battery} is at/below the {self.manager.low_battery_threshold}% threshold. "
-                "First Install click will request a second confirmation."
+                f"BLOCKED: battery {battery} is at/below the configured "
+                f"{self.manager.low_battery_threshold}% OTA minimum."
             )
         return f"Stable pvvx firmware. Battery: {battery}. RSSI: {state.rssi if state.rssi is not None else 'unknown'} dBm."
 
@@ -70,9 +71,9 @@ class AtcFirmwareUpdate(AtcOtaEntity, UpdateEntity):
         warning = ""
         if state.battery is not None and state.battery <= self.manager.low_battery_threshold:
             warning = (
-                f"\n\n⚠️ Battery is **{state.battery}%**, at/below the configured "
-                f"**{self.manager.low_battery_threshold}%** threshold. The first Install attempt is intentionally "
-                "rejected; press Install again within 60 seconds only if you want to proceed anyway."
+                f"\n\n⚠️ OTA is **blocked** while battery is **{state.battery}%**, at/below the configured "
+                f"minimum of **{self.manager.low_battery_threshold}%**. Lower the integration option only if "
+                "you intentionally want to accept the risk."
             )
         return (
             "Firmware is downloaded from the official pvvx/ATC_MiThermometer repository and transferred "
@@ -100,6 +101,7 @@ class AtcFirmwareUpdate(AtcOtaEntity, UpdateEntity):
             "model": state.model,
             "hardware_revision": state.hardware_revision,
             "battery": state.battery,
+            "battery_last_seen": state.battery_last_seen,
             "strongest_rssi": state.rssi,
             "strongest_proxy": state.strongest_proxy,
             "ota_message": state.ota_message,
