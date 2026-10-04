@@ -177,9 +177,15 @@ async function refreshStatus() {
     const mode = s.proxy_mode || s.proxy.mode || 'unknown';
     const count = (s.proxy.proxies || []).filter(p => p.connected).length;
     byId('proxyStatus').innerHTML = `<span class="${cls}"><b>${escapeHtml(s.proxy.status)}</b></span> — mode: <b>${escapeHtml(mode)}</b> — ${count} connected${s.proxy.address ? ' — '+escapeHtml(s.proxy.address) : ''}${s.proxy.error ? '<br><span class="bad">'+escapeHtml(s.proxy.error)+'</span>' : ''}`;
-    byId('proxyDiscoveryNote').innerHTML = s.proxy_discovery_error
-      ? `<span class="warn">Auto-discovery: ${escapeHtml(s.proxy_discovery_error)}</span>${mode.startsWith('manual') ? ' — using manual fallback.' : ''}`
-      : (s.auto_discover_proxies ? 'Automatic discovery is enabled. Only ESPHome nodes with Bluetooth Proxy active GATT support are selected.' : 'Automatic discovery is disabled; using manual configuration.');
+    const phase = s.proxy_phase || '';
+    if (phase === 'discovering') {
+      byId('proxyDiscoveryNote').innerHTML = `<span class="warn">${escapeHtml(s.proxy_message || 'Discovering ESPHome Bluetooth Proxies…')}</span> The Web UI is ready; this runs in the background.`;
+    } else {
+      byId('proxyDiscoveryNote').innerHTML = s.proxy_discovery_error
+        ? `<span class="warn">Auto-discovery: ${escapeHtml(s.proxy_discovery_error)}</span>${mode.startsWith('manual') ? ' — using manual fallback.' : ''}`
+        : (s.auto_discover_proxies ? 'Automatic discovery is enabled. Only ESPHome nodes with Bluetooth Proxy active GATT support are selected.' : 'Automatic discovery is disabled; using manual configuration.');
+    }
+    byId('proxyRefreshBtn').disabled = phase === 'discovering';
     renderProxyRows(s);
     const ha = s.home_assistant || {};
     if (!ha.publishing_enabled) {
@@ -316,15 +322,17 @@ byId('showAll').addEventListener('change', renderDevices);
 byId('proxyRefreshBtn').addEventListener('click', async () => {
   const btn = byId('proxyRefreshBtn');
   btn.disabled = true;
-  byId('proxyDiscoveryNote').textContent = 'Rediscovering ESPHome nodes and probing Bluetooth Proxy capabilities…';
+  byId('proxyDiscoveryNote').textContent = 'Starting ESPHome proxy rediscovery…';
   try {
     const r = await fetch(apiUrl('api/proxies/refresh'), {method:'POST'});
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || JSON.stringify(data));
-    await refreshStatus();
+    byId('proxyDiscoveryNote').textContent = data.status === 'already-running'
+      ? 'Proxy discovery is already running in the background.'
+      : 'Proxy discovery started in the background. You can keep using this page.';
+    setTimeout(refreshStatus, 250);
   } catch(e) {
     byId('proxyDiscoveryNote').innerHTML = `<span class="bad">${escapeHtml(String(e))}</span>`;
-  } finally {
     btn.disabled = false;
   }
 });

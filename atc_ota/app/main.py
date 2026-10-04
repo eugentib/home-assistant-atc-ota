@@ -90,6 +90,9 @@ class Runtime:
         self.proxy_discovery: list[dict[str, Any]] = []
         self.proxy_discovery_error: str | None = None
         self.proxy_mode = "not-started"
+        self.proxy_phase = "not-started"
+        self.proxy_message = "Proxy discovery has not started"
+        self.proxy_task: asyncio.Task[None] | None = None
 
     @property
     def proxy_label(self) -> str:
@@ -98,18 +101,47 @@ class Runtime:
         return str(self.options.get("proxy_address", ""))
 
     async def start(self) -> None:
+        """Start the web app immediately; initialize BLE proxies in the background."""
         self.options = load_options()
         configure_logging(bool(self.options.get("debug", False)))
 
         self.publisher = HomeAssistantPublisher(
             bool(self.options.get("publish_to_home_assistant", True))
         )
-        await self.configure_proxies()
+        self.proxy_phase = "discovering"
+        self.proxy_message = "Discovering ESPHome Bluetooth Proxies in the background"
+        self.proxy_mode = "discovering"
+        self.proxy_task = asyncio.create_task(self._configure_proxies_background())
         self.maintenance_task = asyncio.create_task(self._maintenance_loop())
+
+    async def _configure_proxies_background(self) -> None:
+        """Run slow Home Assistant/ESPHome probing without blocking Ingress startup."""
+        try:
+            await self.configure_proxies()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - keep web UI available for diagnostics
+            logging.exception("ESPHome Bluetooth Proxy initialization failed")
+            self.proxy_phase = "error"
+            self.proxy_message = f"{type(exc).__name__}: {exc}"
+            self.proxy_discovery_error = self.proxy_discovery_error or self.proxy_message
+            if self.bridge is None:
+                self.proxy_mode = "error"
+
+    def start_proxy_refresh(self) -> bool:
+        """Schedule proxy discovery/reconfiguration and return False if already running."""
+        if self.proxy_task is not None and not self.proxy_task.done():
+            return False
+        self.proxy_phase = "discovering"
+        self.proxy_message = "Rediscovering ESPHome Bluetooth Proxies in the background"
+        self.proxy_task = asyncio.create_task(self._configure_proxies_background())
+        return True
 
     async def configure_proxies(self) -> None:
         """Discover compatible ESPHome proxies, with manual config as a fallback."""
         async with self.proxy_refresh_lock:
+            self.proxy_phase = "discovering"
+            self.proxy_message = "Querying Home Assistant and probing ESPHome nodes"
             auto = bool(self.options.get("auto_discover_proxies", True))
             configs: list[dict[str, Any]] = []
             mode = "manual"
@@ -164,9 +196,15 @@ class Runtime:
             await bridge.start()
             self.bridge = bridge
             self.proxy_mode = mode
+            self.proxy_phase = "ready" if bridge.state.connected else "connecting"
+            self.proxy_message = (
+                f"{bridge.connected_count} Bluetooth Proxy connection(s) ready"
+                if bridge.state.connected
+                else "Proxy configuration completed; waiting for runtime connections"
+            )
 
     async def stop(self) -> None:
-        for task in (self.inventory_task, self.maintenance_task):
+        for task in (self.proxy_task, self.inventory_task, self.maintenance_task):
             if task and not task.done():
                 task.cancel()
                 try:
@@ -258,7 +296,7 @@ async def lifespan(_: FastAPI):
         await runtime.stop()
 
 
-app = FastAPI(title="ATC OTA over ESPHome", version="0.1.5", lifespan=lifespan)
+app = FastAPI(title="ATC OTA over ESPHome", version="0.1.6", lifespan=lifespan)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -273,12 +311,16 @@ async def health() -> dict[str, str]:
 
 @app.get("/api/status")
 async def status() -> dict[str, Any]:
+    if runtime.bridge is not None and runtime.bridge.state.connected and runtime.proxy_phase == "connecting":
+        runtime.proxy_phase = "ready"
+        runtime.proxy_message = f"{runtime.bridge.connected_count} Bluetooth Proxy connection(s) ready"
     if runtime.bridge is None:
         proxy = {
             "address": runtime.options.get("proxy_address", ""),
             "connected": False,
-            "status": "not-started",
-            "error": None,
+            "status": runtime.proxy_phase,
+            "error": runtime.proxy_message if runtime.proxy_phase == "error" else None,
+            "proxies": [],
         }
     else:
         proxy = asdict(runtime.bridge.state)
@@ -286,6 +328,8 @@ async def status() -> dict[str, Any]:
         "version": app.version,
         "proxy": proxy,
         "proxy_mode": runtime.proxy_mode,
+        "proxy_phase": runtime.proxy_phase,
+        "proxy_message": runtime.proxy_message,
         "auto_discover_proxies": bool(runtime.options.get("auto_discover_proxies", True)),
         "proxy_discovery": runtime.proxy_discovery,
         "proxy_discovery_error": runtime.proxy_discovery_error,
@@ -306,18 +350,9 @@ async def refresh_proxies() -> dict[str, Any]:
         raise HTTPException(status_code=409, detail="Cannot rediscover proxies while inventory refresh is running")
     if runtime.ble_lock.locked():
         raise HTTPException(status_code=409, detail="Cannot rediscover proxies while a BLE/GATT operation is active")
-    try:
-        await runtime.configure_proxies()
-    except Exception as exc:  # noqa: BLE001
-        logging.exception("ESPHome Bluetooth Proxy rediscovery failed")
-        raise HTTPException(status_code=503, detail=f"{type(exc).__name__}: {exc}") from exc
-    return {
-        "status": "ok",
-        "mode": runtime.proxy_mode,
-        "proxy": asdict(runtime.bridge.state) if runtime.bridge is not None else None,
-        "discovery": runtime.proxy_discovery,
-        "discovery_error": runtime.proxy_discovery_error,
-    }
+    if not runtime.start_proxy_refresh():
+        return {"status": "already-running", "phase": runtime.proxy_phase}
+    return {"status": "started", "phase": runtime.proxy_phase}
 
 
 @app.post("/api/scan")

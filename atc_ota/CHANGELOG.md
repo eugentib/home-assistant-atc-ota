@@ -1,3 +1,10 @@
+## 0.1.6
+
+- Start the Home Assistant Ingress Web UI immediately instead of blocking app startup on ESPHome proxy discovery/probing.
+- Run initial proxy discovery and manual **Rediscover proxies** requests as background tasks with live status in the UI.
+- Keep the UI and `/health` endpoint available while proxies are still being queried and connected.
+- Probe different ESPHome nodes concurrently with a bounded concurrency of four, reducing discovery time when one unrelated node is slow or unreachable.
+
 ## 0.1.5
 
 - Fix automatic ESPHome proxy discovery when multicast mDNS browsing is unavailable inside the Home Assistant app container.

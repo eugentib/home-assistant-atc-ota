@@ -360,11 +360,11 @@ async def discover_home_assistant_proxies(timeout: float = 3.0) -> tuple[list[Di
 
     by_mac = {node.mac: node for node in mdns_nodes if node.mac}
     by_name = {node.name.lower(): node for node in mdns_nodes}
-    discovered: list[DiscoveredProxy] = []
+    semaphore = asyncio.Semaphore(4)
 
-    for entry in entries or []:
+    async def resolve_entry(entry: dict[str, Any]) -> DiscoveredProxy | None:
         if entry.get("state") != "loaded" or entry.get("disabled_by") is not None:
-            continue
+            return None
         entry_id = str(entry.get("entry_id") or "")
         title = str(entry.get("title") or entry_id)
         mac = _network_mac_for_entry(devices or [], entry_id)
@@ -376,54 +376,55 @@ async def discover_home_assistant_proxies(timeout: float = 3.0) -> tuple[list[Di
 
         candidates = _candidate_hosts(entry, device, node)
         if not candidates:
-            discovered.append(
-                DiscoveredProxy(
-                    entry_id=entry_id,
-                    name=title,
-                    host="",
-                    port=6053,
-                    mac=mac,
-                    noise_psk=key_by_entry.get(entry_id),
-                    status="not-resolved",
-                    error="No mDNS, configuration URL, or usable .local hostname candidate was available",
-                )
-            )
-            continue
-
-        attempts: list[str] = []
-        selected: DiscoveredProxy | None = None
-        for host, port, source in candidates:
-            proxy = DiscoveredProxy(
-                entry_id=entry_id,
-                name=(node.friendly_name if node and node.friendly_name else title),
-                host=host,
-                port=port,
-                mac=mac or (node.mac if node else ""),
-                noise_psk=key_by_entry.get(entry_id),
-                resolved_via=source,
-            )
-            await _probe_proxy(proxy)
-            if proxy.status in {"usable", "passive-only", "not-bluetooth-proxy"}:
-                selected = proxy
-                break
-            attempts.append(f"{host} via {source}: {proxy.status}")
-
-        if selected is None:
-            # Keep the strongest candidate in the UI, but include all attempted
-            # resolution paths in the error for useful diagnostics.
-            host, port, source = candidates[0]
-            selected = DiscoveredProxy(
+            return DiscoveredProxy(
                 entry_id=entry_id,
                 name=title,
-                host=host,
-                port=port,
+                host="",
+                port=6053,
                 mac=mac,
                 noise_psk=key_by_entry.get(entry_id),
-                status="probe-failed",
-                error="; ".join(attempts) or "All host candidates failed",
-                resolved_via=source,
+                status="not-resolved",
+                error="No mDNS, configuration URL, or usable .local hostname candidate was available",
             )
-        discovered.append(selected)
+
+        # Different ESPHome nodes are probed concurrently (bounded), while host
+        # candidates for one node remain sequential so the strongest source wins.
+        async with semaphore:
+            attempts: list[str] = []
+            selected: DiscoveredProxy | None = None
+            for host, port, source in candidates:
+                proxy = DiscoveredProxy(
+                    entry_id=entry_id,
+                    name=(node.friendly_name if node and node.friendly_name else title),
+                    host=host,
+                    port=port,
+                    mac=mac or (node.mac if node else ""),
+                    noise_psk=key_by_entry.get(entry_id),
+                    resolved_via=source,
+                )
+                await _probe_proxy(proxy)
+                if proxy.status in {"usable", "passive-only", "not-bluetooth-proxy"}:
+                    selected = proxy
+                    break
+                attempts.append(f"{host} via {source}: {proxy.status}")
+
+            if selected is None:
+                host, port, source = candidates[0]
+                selected = DiscoveredProxy(
+                    entry_id=entry_id,
+                    name=title,
+                    host=host,
+                    port=port,
+                    mac=mac,
+                    noise_psk=key_by_entry.get(entry_id),
+                    status="probe-failed",
+                    error="; ".join(attempts) or "All host candidates failed",
+                    resolved_via=source,
+                )
+            return selected
+
+    results = await asyncio.gather(*(resolve_entry(entry) for entry in (entries or [])))
+    discovered = [item for item in results if item is not None]
 
     discovered.sort(key=lambda p: (not p.usable, p.name.lower(), p.host))
     # A failed multicast browse is informational if another HA-derived route worked.

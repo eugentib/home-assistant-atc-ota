@@ -116,3 +116,8 @@ The downloaded/uploaded image is validated for the Telink firmware marker (`KNLT
 ### Automatic proxy host resolution
 
 The app first queries Home Assistant for loaded ESPHome entries and their API encryption keys. It then resolves each node using, in order, ESPHome mDNS (when multicast is visible), the device registry `configuration_url`, and direct `<name>.local` candidates derived from Home Assistant names. Each candidate is verified against the expected ESPHome MAC before it is accepted. This avoids requiring multicast browsing inside the app container.
+
+
+## Startup behavior
+
+The Ingress Web UI starts immediately. Automatic ESPHome Bluetooth Proxy discovery/probing continues in the background; the proxy status section updates while it runs. You do not need to restart the app while it shows `discovering`.
