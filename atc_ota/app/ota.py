@@ -41,9 +41,18 @@ async def flash_telink(
 
     progress(2, f"Connecting to {device.name or address} ({address})")
 
-    client = bleak.BleakClient(device, timeout=20.0)
+    # Retry transient proxy/GATT connection failures before OTA mode starts.
+    # Once flashing begins we intentionally do not retry/restart the transfer.
+    from bleak_retry_connector import establish_connection
+
+    client = await establish_connection(
+        bleak.BleakClient,
+        device,
+        name=device.name or address,
+        max_attempts=2,
+        timeout=12.0,
+    )
     try:
-        await client.connect()
         progress(3, "GATT connected; checking Telink OTA service")
 
         characteristic = client.services.get_characteristic(OTA_CHAR_UUID)

@@ -74,6 +74,8 @@ class HomeAssistantPublisher:
             "update_available": item.get("update_available"),
             "rssi": item.get("rssi"),
             "battery_percent": battery_numeric,
+            "battery_source": item.get("battery_source"),
+            "battery_advertised_at": item.get("battery_advertised_at"),
             "low_battery": low_battery if battery_numeric is not None else None,
             "low_battery_threshold": self.low_battery_threshold,
             "proxy": proxy_address,

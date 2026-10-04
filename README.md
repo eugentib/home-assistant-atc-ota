@@ -50,7 +50,7 @@ The inventory itself is persisted in the app data directory and is republished a
 
 ## Status
 
-Version `0.1.10` remains experimental. Use it first on a thermometer that you can recover by SWire if necessary.
+Version `0.1.11` remains experimental. Use it first on a thermometer that you can recover by SWire if necessary.
 
 ## Upstream projects
 
@@ -75,6 +75,6 @@ The BLE table distinguishes the advertisement **Format** (for example BTHome v2 
 
 ### Battery preflight
 
-Version `0.1.10` reads the standard BLE Battery Level characteristic (`0x2A19`) during GATT inventory/device refresh. The value is stored in the inventory, shown in the UI, and published to Home Assistant. Before either automatic or manual OTA the app refreshes device information again; if the battery is at or below `low_battery_warning_percent` (default `30`), the UI requires explicit confirmation before the OTA job is queued.
+Version `0.1.11` reads battery primarily from unencrypted BTHome v2 (`0xFCD2`) advertisements (object `0x01`) and retains the standard GATT Battery Level (`0x2A19`) as a fallback during device-info reads. Because pvvx may transmit battery in a separate BTHome packet, the scan callback keeps any battery packet observed during the entire scan window instead of looking only at the final advertisement. The value is stored in the inventory, shown in the UI, and published to Home Assistant. Before OTA, cached/passively refreshed battery data is used first; if the battery is at or below `low_battery_warning_percent` (default `30`), the UI requires explicit confirmation.
 
 The threshold is configurable. Note that the upstream pvvx documentation recommends **more than 40%** battery for reliable connection/reflashing on LYWSD03MMC, so the default 30% warning is intentionally permissive.

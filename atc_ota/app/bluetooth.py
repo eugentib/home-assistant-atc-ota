@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -11,7 +12,7 @@ import habluetooth
 from bleak_esphome import APIConnectionManager
 from habluetooth import HaBleakClientWrapper, HaBleakScannerWrapper, set_manager
 
-from .discovery import classify_atc
+from .discovery import classify_atc, parse_bthome_battery
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -248,7 +249,37 @@ class BluetoothProxyBridge:
 
         import bleak
 
-        discovered = await bleak.BleakScanner.discover(timeout=timeout, return_adv=True)
+        # Keep every changed advertisement during the scan window. pvvx BTHome
+        # v2 intentionally sends some measurements (including battery) in
+        # separate packets, so looking only at the final advertisement can miss
+        # battery even though it was received a moment earlier.
+        advertised_battery: dict[str, dict[str, Any]] = {}
+
+        def on_advertisement(device: Any, adv: Any) -> None:
+            try:
+                service_data = {
+                    str(k).lower(): bytes(v)
+                    for k, v in (getattr(adv, "service_data", None) or {}).items()
+                }
+                battery = parse_bthome_battery(service_data)
+                if battery is None:
+                    return
+                address = _norm_mac(str(getattr(device, "address", "") or ""))
+                if not address:
+                    return
+                advertised_battery[address] = {
+                    "battery_percent": battery,
+                    "battery_source": "BTHome v2 advertisement",
+                    "battery_advertised_at": time.time(),
+                }
+            except Exception:  # noqa: BLE001 - malformed advertisements are ignored
+                _LOGGER.debug("Unable to parse BTHome advertisement", exc_info=True)
+
+        discovered = await bleak.BleakScanner.discover(
+            timeout=timeout,
+            return_adv=True,
+            detection_callback=on_advertisement,
+        )
         per_source = self._scanner_observations()
         result: list[dict[str, Any]] = []
         for device, adv in discovered.values():
@@ -261,7 +292,20 @@ class BluetoothProxyBridge:
                 str(k).lower(): bytes(v)
                 for k, v in (getattr(adv, "service_data", None) or {}).items()
             }
-            candidate, reason = classify_atc(name, service_uuids, service_data.keys())
+            candidate, reason = classify_atc(
+                name, service_uuids, service_data.keys(), address=address
+            )
+            # Defensive fallback for backends that only surface the final packet
+            # to the detection callback.
+            battery_fields = advertised_battery.get(norm_address)
+            if battery_fields is None:
+                battery = parse_bthome_battery(service_data)
+                if battery is not None:
+                    battery_fields = {
+                        "battery_percent": battery,
+                        "battery_source": "BTHome v2 advertisement",
+                        "battery_advertised_at": time.time(),
+                    }
 
             # The BLEDevice returned by habluetooth represents its currently
             # selected/arbitrated source.  That source is intentionally sticky
@@ -309,6 +353,7 @@ class BluetoothProxyBridge:
                     "route_source": selected_source,
                     "route_proxy": route_proxy,
                     "route_rssi": rssi,
+                    **(battery_fields or {}),
                 }
             )
 

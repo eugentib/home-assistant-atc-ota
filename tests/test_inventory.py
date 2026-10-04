@@ -39,3 +39,27 @@ def test_inventory_persists_battery_percent(tmp_path):
     store.save()
     reloaded = InventoryStore(tmp_path / "devices.json")
     assert reloaded.get("A4:C1:38:00:00:01")["battery_percent"] == 27
+
+
+def test_gatt_missing_battery_does_not_erase_advertised_battery(tmp_path):
+    store = InventoryStore(tmp_path / "devices.json")
+    store.note_scan(
+        [{
+            "address": "A4:C1:38:00:00:02",
+            "name": "ATC_000002",
+            "candidate": True,
+            "candidate_reason": "BTHome v2 0xFCD2",
+            "battery_percent": 33,
+            "battery_source": "BTHome v2 advertisement",
+            "battery_advertised_at": 1234.0,
+        }],
+        "BTproxy1",
+    )
+    entry = store.update_info(
+        "A4:C1:38:00:00:02",
+        {"model": "LYWSD03MMC", "current_version": "V5.9", "battery_percent": None},
+        latest={"version": "5.9", "path": "bin/ATC_v59.bin", "filename": "ATC_v59.bin"},
+        latest_error=None,
+    )
+    assert entry["battery_percent"] == 33
+    assert entry["battery_source"] == "BTHome v2 advertisement"

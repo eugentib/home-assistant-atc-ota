@@ -62,7 +62,7 @@ INDEX_HTML = r'''<!doctype html>
       <h2 class="grow">BLE devices</h2>
       <label><input type="checkbox" id="showAll"> Show all</label>
       <button id="scanBtn">Scan BLE</button>
-      <button id="inventoryBtn">Read all candidates</button>
+      <button id="inventoryBtn">Refresh inventory</button>
     </div>
     <div id="scanInfo" class="muted">Loading saved inventory…</div>
     <div style="overflow:auto">
@@ -262,7 +262,7 @@ function renderDevices() {
   const rows = visible.map(d => {
     const flag = d.update_available;
     const update = flag === true
-      ? '<span class="pill update">available</span>'
+      ? `<button class="quickUpdate" data-address="${escapeHtml(d.address)}" title="Update directly to stable ${escapeHtml(d.latest?.version || '')}">Update</button>`
       : flag === false
         ? '<span class="pill current">current</span>'
         : '<span class="muted">—</span>';
@@ -285,7 +285,13 @@ function renderDevices() {
   }).join('');
   byId('deviceRows').innerHTML = rows || '<tr><td colspan="13" class="muted">No matching devices. Enable “Show all” to inspect every BLE advertisement.</td></tr>';
   document.querySelectorAll('input[name=device]').forEach(r => r.addEventListener('change', ev => selectDevice(ev.target.dataset.address)));
+  document.querySelectorAll('.quickUpdate').forEach(btn => btn.addEventListener('click', ev => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    startLatestUpdate(ev.currentTarget.dataset.address, cachedDevice(ev.currentTarget.dataset.address));
+  }));
 }
+
 
 function renderSelectedInfo(info) {
   const latest = info?.latest;
@@ -407,7 +413,7 @@ byId('scanBtn').addEventListener('click', async () => {
     if (!r.ok) throw new Error(data.detail || JSON.stringify(data));
     mergeDevices(data.devices || []);
     const candidates = (data.devices || []).filter(d => d.candidate).length;
-    byId('scanInfo').textContent = `Found ${(data.devices || []).length} devices; ${candidates} look like ATC/Xiaomi thermometer candidates. “Read all candidates” will connect to each one and save its metadata.`;
+    byId('scanInfo').textContent = `Found ${(data.devices || []).length} devices; ${candidates} look like ATC/Xiaomi thermometer candidates. “Refresh inventory” reads battery/RSSI passively and only opens GATT for devices whose metadata is still missing.`;
     renderDevices();
   } catch (e) {
     byId('scanInfo').innerHTML = `<span class="bad">${escapeHtml(String(e))}</span>`;
@@ -417,7 +423,7 @@ byId('scanBtn').addEventListener('click', async () => {
 });
 
 byId('inventoryBtn').addEventListener('click', async () => {
-  if (!confirm('Scan and connect to every thermometer candidate sequentially? Weak devices may take several minutes.')) return;
+  if (!confirm('Refresh thermometer inventory? Battery/RSSI are read passively; GATT is only used for devices whose model/version metadata is missing.')) return;
   byId('inventoryBtn').disabled = true;
   try {
     const r = await fetch(apiUrl('api/inventory/refresh'), {method:'POST'});
@@ -460,30 +466,39 @@ byId('target').addEventListener('change', async () => {
   if (address) await selectDevice(address);
 });
 
-byId('latestBtn').addEventListener('click', async () => {
-  const address = byId('target').value.trim();
+async function startLatestUpdate(address, info=null) {
   if (!address) { alert('Select or enter a BLE address.'); return; }
-  const version = selectedInfo?.latest?.version || 'latest stable';
-  const cachedWarning = lowBatteryMessage(selectedInfo || cachedDevice(address), `Updating ${address} to pvvx ${version}`);
-  if (!cachedWarning && !confirm(`Download pvvx ${version} directly from the upstream repository and OTA flash ${address}?`)) return;
+  const cached = info || cachedDevice(address) || {};
+  const version = cached?.latest?.version || 'latest stable';
+  const action = `Updating ${cached.device_name || cached.advertised_name || address} to pvvx ${version}`;
+  const cachedWarning = lowBatteryMessage(cached, action);
+  if (!cachedWarning && !confirm(`Download pvvx ${version} directly from the upstream repository and OTA flash ${cached.device_name || cached.advertised_name || address}?`)) return;
 
+  selectedAddress = address;
+  selectedInfo = cached;
+  byId('target').value = address;
+  renderDevices();
   const btn = byId('latestBtn');
   btn.disabled = true;
-  resetJobUi('Checking battery and downloading latest stable firmware…');
+  resetJobUi('Checking advertised battery and downloading latest stable firmware…');
   try {
-    selectedAddress = address;
     const data = await postOtaWithLowBatteryRetry('api/ota/latest', (confirmed) => {
       const form = new FormData();
       form.append('address', address);
       form.append('confirm_low_battery', confirmed ? 'true' : 'false');
       return form;
-    }, `Updating ${address} to pvvx ${version}`);
+    }, action);
     if (!data) { btn.disabled = false; byId('jobState').textContent = 'OTA cancelled'; return; }
     startPolling(data.job_id);
   } catch (e) {
     byId('jobState').innerHTML = `<span class="bad">${escapeHtml(String(e))}</span>`;
     btn.disabled = false;
   }
+}
+
+byId('latestBtn').addEventListener('click', async () => {
+  const address = byId('target').value.trim();
+  await startLatestUpdate(address, selectedInfo || cachedDevice(address));
 });
 
 byId('flashBtn').addEventListener('click', async () => {

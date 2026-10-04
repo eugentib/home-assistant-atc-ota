@@ -63,9 +63,21 @@ async def read_device_info(address: str) -> dict[str, Any]:
             f"BLE device {address} was not found. Make sure it is advertising and in range of the proxy."
         )
 
-    client = bleak.BleakClient(device, timeout=20.0)
+    # bleak-retry-connector is already a dependency of bleak-esphome.  Using
+    # the *patched* bleak.BleakClient class here keeps ESPHome/habluetooth as
+    # the backend while adding retry/backoff for transient ESP_GATT_ERROR and
+    # connect timeouts. Two attempts keep weak devices from stalling inventory
+    # for minutes while still recovering common one-shot failures.
+    from bleak_retry_connector import establish_connection
+
+    client = await establish_connection(
+        bleak.BleakClient,
+        device,
+        name=device.name or address,
+        max_attempts=2,
+        timeout=12.0,
+    )
     try:
-        await client.connect()
         if not client.is_connected:
             raise RuntimeError("GATT connection did not become active")
 
@@ -98,6 +110,7 @@ async def read_device_info(address: str) -> dict[str, Any]:
             "software_revision": software_revision,
             "manufacturer": manufacturer,
             "battery_percent": battery_percent,
+            "battery_source": "GATT Battery Level" if battery_percent is not None else None,
             "current_version": current_version,
         }
     finally:

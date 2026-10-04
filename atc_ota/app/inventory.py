@@ -106,6 +106,15 @@ class InventoryStore:
                     "last_seen": now,
                 }
             )
+            # Battery can be carried in a separate BTHome v2 advertisement.
+            # Only overwrite the cached value when this scan actually observed
+            # one; a temperature-only packet must not erase a useful battery
+            # reading from an earlier packet/scan.
+            battery = item.get("battery_percent")
+            if isinstance(battery, (int, float)) and not isinstance(battery, bool):
+                entry["battery_percent"] = max(0, min(100, int(battery)))
+                entry["battery_source"] = item.get("battery_source") or "BLE advertisement"
+                entry["battery_advertised_at"] = item.get("battery_advertised_at") or now
 
     def update_info(
         self,
@@ -118,7 +127,17 @@ class InventoryStore:
         key = normalize_address(address)
         now = time.time()
         entry = self.devices.setdefault(key, {"address": key})
+        # Do not erase a battery learned passively from BTHome just because a
+        # firmware build lacks/failed the standard GATT Battery Level read.
+        preserved_battery = entry.get("battery_percent")
+        preserved_source = entry.get("battery_source")
+        preserved_advertised_at = entry.get("battery_advertised_at")
         entry.update(info)
+        if info.get("battery_percent") is None and preserved_battery is not None:
+            entry["battery_percent"] = preserved_battery
+            entry["battery_source"] = preserved_source
+            if preserved_advertised_at is not None:
+                entry["battery_advertised_at"] = preserved_advertised_at
         entry["address"] = key
         entry["last_info_refresh"] = now
         entry["last_error"] = None

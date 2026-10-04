@@ -565,6 +565,42 @@ async def _read_and_cache_device(
     return entry
 
 
+async def _refresh_passive_advertisements(seconds: float | None = None) -> list[dict[str, Any]]:
+    """Refresh RSSI/BTHome battery data without opening a GATT connection."""
+    if runtime.bridge is None or not runtime.bridge.state.connected:
+        return []
+    duration = float(seconds if seconds is not None else min(float(runtime.options.get("scan_seconds", 8)), 6.0))
+    scanned = await runtime.bridge.scan(max(2.0, duration))
+    runtime.inventory.note_scan(scanned, runtime.proxy_label)
+    runtime.inventory.save()
+    return scanned
+
+
+async def _ota_device_info(address: str) -> dict[str, Any]:
+    """Get enough cached metadata for OTA, preferring passive BLE over GATT.
+
+    Battery is normally available from BTHome advertisements, so an update should
+    not consume an extra fragile GATT connection merely to check the battery.
+    GATT is only used here when model/hardware metadata has never been learned.
+    """
+    info = runtime.inventory.get(address) or {}
+
+    battery = info.get("battery_percent")
+    if not isinstance(battery, (int, float)) or isinstance(battery, bool):
+        try:
+            async with runtime.ble_lock:
+                await _refresh_passive_advertisements()
+        except Exception as exc:  # noqa: BLE001 - cached metadata may still be enough
+            logging.info("Passive battery refresh before OTA failed for %s: %s", address, exc)
+        info = runtime.inventory.get(address) or info
+
+    if info.get("model") and info.get("hardware_revision"):
+        return dict(info)
+
+    async with runtime.ble_lock:
+        return await _read_and_cache_device(address)
+
+
 async def _run_inventory_refresh() -> None:
     job = runtime.inventory_job = InventoryJob(
         state="running",
@@ -581,7 +617,8 @@ async def _run_inventory_refresh() -> None:
         runtime.inventory.note_scan(scanned, runtime.proxy_label)
         runtime.inventory.save()
         candidates = runtime.inventory.candidates_seen_since(scan_started - 1)
-        job.add(8, f"Found {len(candidates)} thermometer candidates; reading GATT information sequentially")
+        missing = sum(1 for item in candidates if not (item.get("model") and item.get("current_version")))
+        job.add(8, f"Found {len(candidates)} thermometer candidates; {missing} need GATT metadata, cached devices use passive advertisement data")
 
         try:
             catalog = await fetch_catalog()
@@ -602,7 +639,17 @@ async def _run_inventory_refresh() -> None:
             address = normalize_address(str(item.get("address", "")))
             label = item.get("device_name") or item.get("advertised_name") or address
             base = 10 + int(((index - 1) / len(candidates)) * 82)
-            job.add(base, f"Reading {index}/{len(candidates)}: {label} ({address})")
+
+            # Once model/version metadata has been learned, repeated inventory
+            # scans do not need to wake/connect every thermometer. RSSI and
+            # battery are refreshed passively from advertisements. Selecting a
+            # device still forces a GATT refresh, and our own OTA refreshes it
+            # again after reboot.
+            if item.get("model") and item.get("current_version"):
+                job.add(base, f"Using cached metadata {index}/{len(candidates)}: {label} ({address}); battery/RSSI refreshed passively")
+                continue
+
+            job.add(base, f"Reading GATT {index}/{len(candidates)}: {label} ({address})")
             try:
                 async with runtime.ble_lock:
                     await _read_and_cache_device(address, catalog=catalog)
@@ -613,7 +660,7 @@ async def _run_inventory_refresh() -> None:
                 runtime.inventory.update_error(address, message)
                 runtime.inventory.save()
                 job.add(base, f"Failed {address}: {message}")
-            await asyncio.sleep(0.25)
+            await asyncio.sleep(0.5)
 
         runtime.inventory.mark_inventory_scan()
         if catalog is not None:
@@ -686,8 +733,7 @@ async def start_latest_ota(
         raise HTTPException(status_code=503, detail="ESPHome Bluetooth Proxy is not connected")
 
     try:
-        async with runtime.ble_lock:
-            info = await _read_and_cache_device(address)
+        info = await _ota_device_info(address)
         warning = _low_battery_warning(info)
         if warning is not None and not confirm_low_battery:
             raise HTTPException(status_code=409, detail=warning)
@@ -710,7 +756,11 @@ async def start_latest_ota(
     )
     current = info.get("current_version") or "unknown"
     battery = info.get("battery_percent")
-    battery_text = f"; battery: {int(battery)}%" if isinstance(battery, (int, float)) and not isinstance(battery, bool) else "; battery: unknown"
+    if isinstance(battery, (int, float)) and not isinstance(battery, bool):
+        source = str(info.get("battery_source") or "cached/GATT")
+        battery_text = f"; battery: {int(battery)}% ({source})"
+    else:
+        battery_text = "; battery: unknown"
     job.add(0, f"Downloaded pvvx stable {choice.version} ({choice.filename}); current: {current}{battery_text}")
     if warning is not None:
         job.add(0, f"Low-battery warning acknowledged: {warning['battery_percent']}% <= {warning['threshold_percent']}%")
@@ -741,14 +791,17 @@ async def start_ota(
     if runtime.bridge is None or not runtime.bridge.state.connected:
         raise HTTPException(status_code=503, detail="ESPHome Bluetooth Proxy is not connected")
 
-    # Refresh the battery immediately before accepting a manual flash.  If the
-    # model does not expose Battery Level we keep the manual fallback usable.
-    try:
-        async with runtime.ble_lock:
-            info = await _read_and_cache_device(address)
-    except Exception as exc:  # noqa: BLE001 - unknown battery must not disable manual recovery
-        logging.warning("Unable to refresh battery before manual OTA for %s: %s", address, exc)
-        info = runtime.inventory.get(address) or {}
+    # Prefer the passively advertised BTHome battery value. Manual recovery must
+    # remain usable even when GATT metadata/battery cannot be read.
+    info = runtime.inventory.get(address) or {}
+    battery = info.get("battery_percent")
+    if not isinstance(battery, (int, float)) or isinstance(battery, bool):
+        try:
+            async with runtime.ble_lock:
+                await _refresh_passive_advertisements()
+            info = runtime.inventory.get(address) or info
+        except Exception as exc:  # noqa: BLE001 - unknown battery must not disable manual recovery
+            logging.warning("Unable to refresh advertised battery before manual OTA for %s: %s", address, exc)
     warning = _low_battery_warning(info)
     if warning is not None and not confirm_low_battery:
         raise HTTPException(status_code=409, detail=warning)
@@ -760,7 +813,11 @@ async def start_ota(
         filename=firmware.filename or "firmware.bin",
     )
     battery = info.get("battery_percent")
-    battery_text = f"; battery: {int(battery)}%" if isinstance(battery, (int, float)) and not isinstance(battery, bool) else "; battery: unknown"
+    if isinstance(battery, (int, float)) and not isinstance(battery, bool):
+        source = str(info.get("battery_source") or "cached/GATT")
+        battery_text = f"; battery: {int(battery)}% ({source})"
+    else:
+        battery_text = "; battery: unknown"
     job.add(0, f"Queued {job.filename} for {address}{battery_text}")
     if warning is not None:
         job.add(0, f"Low-battery warning acknowledged: {warning['battery_percent']}% <= {warning['threshold_percent']}%")

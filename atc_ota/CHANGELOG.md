@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.11
+
+- Parse unencrypted BTHome v2 battery object `0x01` directly from `0xFCD2` advertisements, including battery packets seen at any point during the BLE scan window.
+- Preserve passively advertised battery values when a later GATT Battery Level read is missing.
+- Use passive BTHome battery data for OTA preflight, avoiding a redundant GATT connection before automatic updates when model/hardware metadata is already cached.
+- Turn **Update available** in the device table into a one-click **Update** button.
+- Make inventory refresh passive for already-known thermometers; GATT is only opened for devices whose model/version metadata is still missing.
+- Add two-attempt transient GATT retry/backoff via `bleak-retry-connector` for device metadata reads and the pre-OTA connection.
+- Stop treating every generic BTHome v2 device as an ATC thermometer candidate; unnamed BTHome devices require the known LYWSD03MMC Xiaomi MAC prefix.
+
 ## 0.1.10
 
 - Read standard BLE Battery Level (`0x2A19`) during GATT device information refresh.
@@ -8,8 +18,6 @@
 - Refresh the battery immediately before automatic or manual OTA and require explicit confirmation at or below the threshold.
 - Publish per-device battery and low-battery state sensors to Home Assistant.
 - Include battery information in OTA logs and update-summary attributes.
-
-## 0.1.7
 
 ## 0.1.9
 
@@ -24,6 +32,8 @@
 - Show all connected proxies that heard a device and their per-proxy RSSI when available.
 - Persist BLE scanner provenance in the device inventory.
 - Make pvvx current-version detection tolerant of swapped Firmware/Software Revision strings.
+
+## 0.1.7
 
 - Cache the last-known-good auto-discovered ESPHome Bluetooth Proxy configuration in `/data/proxies.json`.
 - Start cached proxy connections immediately on restart, while Home Assistant discovery/probing reconciles in the background.

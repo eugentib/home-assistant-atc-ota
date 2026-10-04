@@ -52,7 +52,16 @@ def test_ble_candidate_detection_by_service_data_uuid():
 
     assert classify_atc("", service_data_uuids=["0000181a-0000-1000-8000-00805f9b34fb"])[0]
     assert classify_atc("", service_data_uuids=["0000fe95-0000-1000-8000-00805f9b34fb"])[0]
-    assert classify_atc("", service_data_uuids=["0000fcd2-0000-1000-8000-00805f9b34fb"])[0]
+    assert classify_atc(
+        "",
+        service_data_uuids=["0000fcd2-0000-1000-8000-00805f9b34fb"],
+        address="A4:C1:38:12:34:56",
+    )[0]
+    assert not classify_atc(
+        "",
+        service_data_uuids=["0000fcd2-0000-1000-8000-00805f9b34fb"],
+        address="CE:47:89:73:63:74",
+    )[0]
 
 
 def test_ble_candidate_detection_accepts_short_uuid():
@@ -84,3 +93,21 @@ def test_resolve_lywsd03mmc_stable_image():
     assert choice.version == "5.9"
     assert choice.filename == "ATC_v59.bin"
     assert choice.path == "bin/ATC_v59.bin"
+
+
+def test_bthome_v2_battery_parser():
+    from app.discovery import parse_bthome_v2_service_data
+
+    # device info v2 (0x40), packet id 9, battery 97%, then temperature
+    parsed = parse_bthome_v2_service_data(bytes.fromhex("400009016102c409"))
+    assert parsed["bthome_version"] == 2
+    assert parsed["bthome_encrypted"] is False
+    assert parsed["battery_percent"] == 97
+
+
+def test_bthome_v2_encrypted_battery_is_not_exposed():
+    from app.discovery import parse_bthome_v2_service_data
+
+    parsed = parse_bthome_v2_service_data(bytes.fromhex("4100090161"))
+    assert parsed["bthome_encrypted"] is True
+    assert "battery_percent" not in parsed
