@@ -15,6 +15,7 @@ from bleak_retry_connector import BleakClientWithServiceCache, establish_connect
 from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import area_registry as ar, device_registry as dr
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
@@ -103,6 +104,8 @@ class DeviceState:
     ota_in_progress: bool = False
     ota_progress: int | None = None
     ota_message: str | None = None
+    ha_name: str | None = None
+    ha_area: str | None = None
 
     def persistent(self) -> dict[str, Any]:
         data = asdict(self)
@@ -151,6 +154,8 @@ class AtcManager:
             except (TypeError, ValueError):
                 _LOGGER.warning("Ignoring invalid stored ATC OTA device %s", address)
 
+        self._refresh_home_assistant_names()
+
         self._unsubs.extend(
             [
                 bluetooth.async_register_callback(
@@ -195,6 +200,103 @@ class AtcManager:
     def _async_catalog_timer(self, _now) -> None:
         self.hass.async_create_task(self.async_refresh_catalog(), "ATC OTA catalog refresh")
 
+    @staticmethod
+    def _normalize_address(value: str | None) -> str:
+        return (value or "").replace("-", ":").upper()
+
+    def _source_device_for_address(self, address: str):
+        """Find the existing HA device/config entry that already owns this BLE sensor.
+
+        BTHome config entries use the Bluetooth address as unique_id. Prefer that
+        exact mapping, then fall back to any non-ATC-OTA device carrying the same
+        Bluetooth connection. This lets us mirror the user-assigned HA device name
+        without opening any Bluetooth connection.
+        """
+        address = self._normalize_address(address)
+        registry = dr.async_get(self.hass)
+
+        matching_entries = [
+            entry
+            for entry in self.hass.config_entries.async_entries("bthome")
+            if self._normalize_address(entry.unique_id) == address
+        ]
+        matching_entry_ids = {entry.entry_id for entry in matching_entries}
+
+        # Prefer the BTHome-owned device, especially one explicitly renamed by user.
+        candidates = [
+            device
+            for device in registry.devices
+            if device.config_entry_id in matching_entry_ids
+        ]
+        if candidates:
+            candidates.sort(key=lambda device: (device.name_by_user is None, device.name is None))
+            return candidates[0], matching_entries[0] if matching_entries else None
+
+        # Fallback for another Bluetooth integration exposing the same physical MAC.
+        for device in registry.devices:
+            if device.config_entry_id == self.entry.entry_id:
+                continue
+            for conn_type, conn_value in getattr(device, "connections", set()):
+                if (
+                    conn_type == dr.CONNECTION_BLUETOOTH
+                    and self._normalize_address(conn_value) == address
+                ):
+                    return device, None
+
+        return None, matching_entries[0] if matching_entries else None
+
+    def _resolve_home_assistant_identity(self, address: str) -> tuple[str | None, str | None]:
+        """Return the HA user-facing name and area for a physical BLE address."""
+        device, config_entry = self._source_device_for_address(address)
+        name: str | None = None
+        area_name: str | None = None
+
+        if device is not None:
+            name = device.name_by_user or device.name
+            if device.area_id:
+                try:
+                    area = ar.async_get(self.hass).async_get_area(device.area_id)
+                    if area is not None:
+                        area_name = area.name
+                except Exception:  # Registry metadata must never break BLE handling.
+                    pass
+
+        if not name and config_entry is not None:
+            name = config_entry.title
+
+        return name, area_name
+
+    def _sync_own_device_registry_name(self, state: DeviceState) -> None:
+        """Mirror the existing HA/BTHome device name onto our ATC OTA device.
+
+        Preserve an explicit user rename made directly on the ATC OTA device.
+        """
+        if not state.ha_name:
+            return
+        registry = dr.async_get(self.hass)
+        own = registry.async_get_device_by_identifier(
+            (DOMAIN, state.address), self.entry.entry_id
+        )
+        if own is None or own.name_by_user is not None or own.name == state.ha_name:
+            return
+        try:
+            registry.async_update_device(own.id, name=state.ha_name)
+        except Exception as exc:  # Never fail the integration for cosmetic metadata.
+            _LOGGER.debug("Unable to sync HA name for %s: %s", state.address, exc)
+
+    def _refresh_home_assistant_name(self, state: DeviceState) -> bool:
+        name, area_name = self._resolve_home_assistant_identity(state.address)
+        changed = state.ha_name != name or state.ha_area != area_name
+        state.ha_name = name
+        state.ha_area = area_name
+        if changed:
+            self._sync_own_device_registry_name(state)
+        return changed
+
+    def _refresh_home_assistant_names(self) -> None:
+        for state in self.devices.values():
+            self._refresh_home_assistant_name(state)
+
     def _looks_like_atc(self, info) -> bool:
         address = info.address.upper()
         if address in self.devices:
@@ -221,6 +323,7 @@ class AtcManager:
         state = self.devices.setdefault(address, DeviceState(address=address))
         if info.name and info.name not in (address, "Unknown"):
             state.name = info.name
+        self._refresh_home_assistant_name(state)
         state.last_seen = time.time()
 
         # Compute strongest current observation across HA's shared scanners/proxies.
@@ -486,6 +589,7 @@ class AtcManager:
 
                 if device_name:
                     state.name = device_name
+                self._refresh_home_assistant_name(state)
                 state.model = model or state.model
                 state.serial = serial or state.serial
                 state.firmware_revision = fw or state.firmware_revision

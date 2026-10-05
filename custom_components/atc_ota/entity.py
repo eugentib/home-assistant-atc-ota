@@ -28,7 +28,7 @@ class AtcOtaEntity(Entity):
         state = self.state_data
         return DeviceInfo(
             identifiers={(DOMAIN, self.address)},
-            name=state.name or f"ATC {self.address[-8:].replace(':', '')}",
+            name=state.ha_name or state.name or f"ATC {self.address[-8:].replace(':', '')}",
             manufacturer=state.manufacturer or "Xiaomi / pvvx",
             model=state.model or "ATC/pvvx thermometer",
             hw_version=state.hardware_revision,
