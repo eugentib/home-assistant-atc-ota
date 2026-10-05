@@ -100,6 +100,7 @@ class AtcFirmwareUpdate(AtcOtaEntity, UpdateEntity):
             "address": state.address,
             "home_assistant_name": state.ha_name,
             "home_assistant_area": state.ha_area,
+            "home_assistant_area_id": state.ha_area_id,
             "ble_name": state.name,
             "model": state.model,
             "hardware_revision": state.hardware_revision,

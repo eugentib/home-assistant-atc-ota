@@ -1,4 +1,4 @@
-# ATC OTA for Home Assistant — v0.2.5
+# ATC OTA for Home Assistant — v0.2.6
 
 ## Compatibility notes
 
@@ -6,9 +6,9 @@ Home Assistant provides `bleak-retry-connector` through its built-in Bluetooth i
 
 A Home Assistant custom integration for pvvx/ATC Telink thermometers such as **LYWSD03MMC**.
 
-## Why v0.2.5 is different
+## Why v0.2.6 is different
 
-v0.1.x was a Home Assistant app/add-on that opened its own ESPHome API subscriptions to Bluetooth Proxy nodes. v0.2.5 is a **custom integration inside Home Assistant Core** and uses Home Assistant's existing Bluetooth manager instead.
+v0.1.x was a Home Assistant app/add-on that opened its own ESPHome API subscriptions to Bluetooth Proxy nodes. v0.2.6 is a **custom integration inside Home Assistant Core** and uses Home Assistant's existing Bluetooth manager instead.
 
 That means:
 
@@ -19,9 +19,11 @@ That means:
 - advertisements, proxy selection and connection slots remain owned by Home Assistant;
 - OTA uses the same `BLEDevice` routing Home Assistant gives other Bluetooth integrations.
 
-## v0.2.5 Home Assistant name sync
+## v0.2.6 Home Assistant name sync
 
 ATC OTA now looks up the existing Home Assistant/BTHome device for the same Bluetooth address and mirrors its user-assigned device name. A device renamed in Home Assistant, for example **Dormitor**, **Printer**, or **Afara**, is therefore shown with that name in ATC OTA instead of only `ATC_xxxxxx`. The firmware-advertised BLE name is kept separately for diagnostics.
+
+The **Device Area** is mirrored as well. If the existing BTHome/Bluetooth device is assigned to an HA area such as **Afara**, **Dormitor** or **Living**, the corresponding ATC OTA device is assigned to the same area. Later area changes on the source device are picked up on the next Bluetooth advertisement (or after restart). The source HA device is treated as authoritative for area placement.
 
 ## Features
 
@@ -40,7 +42,7 @@ ATC OTA now looks up the existing Home Assistant/BTHome device for the same Blue
 
 ## Migration from v0.1.x
 
-**Stop the old ATC OTA app/add-on before enabling v0.2.5.** The old app should not run alongside this integration.
+**Stop the old ATC OTA app/add-on before enabling v0.2.6.** The old app should not run alongside this integration.
 
 The add-on inventory cannot be imported automatically because app `/data` is isolated from Home Assistant Core. Devices are re-discovered from Home Assistant's Bluetooth history and advertisements.
 
@@ -84,7 +86,7 @@ The update entity reports installed/latest versions, OTA progress, battery, stro
 
 ## Battery safety
 
-The default OTA battery minimum is **30%** and can be changed under the integration's Options. v0.2.5 requires a recent battery reading before flashing and refuses OTA when the value is unknown/stale or at/below the threshold. There is no double-click bypass; lowering the configured threshold is the explicit override.
+The default OTA battery minimum is **30%** and can be changed under the integration's Options. v0.2.6 requires a recent battery reading before flashing and refuses OTA when the value is unknown/stale or at/below the threshold. There is no double-click bypass; lowering the configured threshold is the explicit override.
 
 ## Bluetooth architecture
 

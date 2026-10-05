@@ -106,6 +106,7 @@ class DeviceState:
     ota_message: str | None = None
     ha_name: str | None = None
     ha_area: str | None = None
+    ha_area_id: str | None = None
 
     def persistent(self) -> dict[str, Any]:
         data = asdict(self)
@@ -245,17 +246,21 @@ class AtcManager:
 
         return None, matching_entries[0] if matching_entries else None
 
-    def _resolve_home_assistant_identity(self, address: str) -> tuple[str | None, str | None]:
-        """Return the HA user-facing name and area for a physical BLE address."""
+    def _resolve_home_assistant_identity(
+        self, address: str
+    ) -> tuple[str | None, str | None, str | None]:
+        """Return HA user-facing name, area name and area id for a BLE address."""
         device, config_entry = self._source_device_for_address(address)
         name: str | None = None
         area_name: str | None = None
+        area_id: str | None = None
 
         if device is not None:
             name = device.name_by_user or device.name
-            if device.area_id:
+            area_id = device.area_id
+            if area_id:
                 try:
-                    area = ar.async_get(self.hass).async_get_area(device.area_id)
+                    area = ar.async_get(self.hass).async_get_area(area_id)
                     if area is not None:
                         area_name = area.name
                 except Exception:  # Registry metadata must never break BLE handling.
@@ -264,33 +269,48 @@ class AtcManager:
         if not name and config_entry is not None:
             name = config_entry.title
 
-        return name, area_name
+        return name, area_name, area_id
 
-    def _sync_own_device_registry_name(self, state: DeviceState) -> None:
-        """Mirror the existing HA/BTHome device name onto our ATC OTA device.
+    def _sync_own_device_registry_identity(self, state: DeviceState) -> None:
+        """Mirror the source HA device name and area onto the ATC OTA device.
 
-        Preserve an explicit user rename made directly on the ATC OTA device.
+        An explicit user rename made directly on the ATC OTA device is preserved.
+        Area is intentionally mirrored from the source Bluetooth/BTHome device so
+        both representations of the same physical thermometer stay in the same HA
+        area.
         """
-        if not state.ha_name:
-            return
         registry = dr.async_get(self.hass)
         own = registry.async_get_device_by_identifier(
             (DOMAIN, state.address), self.entry.entry_id
         )
-        if own is None or own.name_by_user is not None or own.name == state.ha_name:
+        if own is None:
             return
+
+        changes: dict[str, Any] = {}
+        if state.ha_name and own.name_by_user is None and own.name != state.ha_name:
+            changes["name"] = state.ha_name
+        if own.area_id != state.ha_area_id:
+            changes["area_id"] = state.ha_area_id
+        if not changes:
+            return
+
         try:
-            registry.async_update_device(own.id, name=state.ha_name)
+            registry.async_update_device(own.id, **changes)
         except Exception as exc:  # Never fail the integration for cosmetic metadata.
-            _LOGGER.debug("Unable to sync HA name for %s: %s", state.address, exc)
+            _LOGGER.debug("Unable to sync HA identity for %s: %s", state.address, exc)
 
     def _refresh_home_assistant_name(self, state: DeviceState) -> bool:
-        name, area_name = self._resolve_home_assistant_identity(state.address)
-        changed = state.ha_name != name or state.ha_area != area_name
+        name, area_name, area_id = self._resolve_home_assistant_identity(state.address)
+        changed = (
+            state.ha_name != name
+            or state.ha_area != area_name
+            or state.ha_area_id != area_id
+        )
         state.ha_name = name
         state.ha_area = area_name
+        state.ha_area_id = area_id
         if changed:
-            self._sync_own_device_registry_name(state)
+            self._sync_own_device_registry_identity(state)
         return changed
 
     def _refresh_home_assistant_names(self) -> None:

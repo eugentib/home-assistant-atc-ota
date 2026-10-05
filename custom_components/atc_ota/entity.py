@@ -33,6 +33,7 @@ class AtcOtaEntity(Entity):
             model=state.model or "ATC/pvvx thermometer",
             hw_version=state.hardware_revision,
             sw_version=state.current_version,
+            suggested_area=state.ha_area,
             configuration_url="https://github.com/pvvx/ATC_MiThermometer",
         )
 
