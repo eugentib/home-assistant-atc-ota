@@ -82,18 +82,50 @@ class AtcFirmwareUpdate(AtcOtaEntity, UpdateEntity):
 
     async def async_release_notes(self):
         state = self.state_data
+        broadcast = (
+            f"{state.strongest_proxy or 'unknown'} / "
+            f"{state.rssi if state.rssi is not None else 'unknown'} dBm"
+        )
+        gatt = (
+            f"{state.gatt_proxy or 'none'} / "
+            f"{state.gatt_rssi if state.gatt_rssi is not None else 'unknown'} dBm"
+        )
+        route_age = (
+            f"{state.gatt_route_age_seconds}s"
+            if state.gatt_route_age_seconds is not None
+            else "unknown"
+        )
+        active_gatt = (
+            "yes" if state.gatt_active_connections is True
+            else "no" if state.gatt_active_connections is False
+            else "unknown/non-ESPHome"
+        )
+
         warning = ""
         if state.battery is not None and state.battery <= self.manager.low_battery_threshold:
             warning = (
-                f"\n\n⚠️ OTA is **blocked** while battery is **{state.battery}%**, at/below the configured "
-                f"minimum of **{self.manager.low_battery_threshold}%**. Lower the integration option only if "
-                "you intentionally want to accept the risk."
+                f"\n\n⚠️ OTA is **blocked** while battery is **{state.battery}%**, "
+                f"at/below the configured minimum of "
+                f"**{self.manager.low_battery_threshold}%**."
             )
+
         return (
-            "Firmware is obtained from the official pvvx/ATC_MiThermometer repository, validated and "
-            "cached persistently in Home Assistant after the first download. Later updates using the same "
-            "image reuse the local cache. Transfer still goes through Home Assistant's shared Bluetooth "
-            "stack; the integration does not connect directly to ESPHome Bluetooth Proxies."
+            "### Current OTA preflight\n\n"
+            f"- **Readiness:** `{state.ota_readiness}`\n"
+            f"- **Reason:** {state.ota_readiness_reason or '—'}\n"
+            f"- **Battery:** {state.battery if state.battery is not None else 'unknown'}%\n"
+            f"- **Broadcast source:** {broadcast}\n"
+            f"- **OTA/GATT route:** {gatt}\n"
+            f"- **GATT route age:** {route_age}\n"
+            f"- **ESPHome ACTIVE_CONNECTIONS:** {active_gatt}\n"
+            f"- **Recent connection failures:** "
+            f"{state.gatt_failures if state.gatt_failures is not None else 'unknown'}\n"
+            f"- **BLE slots:** "
+            f"{state.gatt_free_slots if state.gatt_free_slots is not None else 'unknown'} free / "
+            f"{state.gatt_slots if state.gatt_slots is not None else 'unknown'} total\n\n"
+            "Firmware is obtained from the official pvvx/ATC_MiThermometer repository, "
+            "validated and cached persistently in Home Assistant. Transfer goes through "
+            "Home Assistant's shared Bluetooth stack."
             + warning
         )
 
@@ -129,6 +161,8 @@ class AtcFirmwareUpdate(AtcOtaEntity, UpdateEntity):
             "gatt_failures": state.gatt_failures,
             "gatt_free_slots": state.gatt_free_slots,
             "gatt_slots": state.gatt_slots,
+            "gatt_active_connections": state.gatt_active_connections,
+            "gatt_feature_flags": state.gatt_feature_flags,
             "ota_readiness": state.ota_readiness,
             "ota_readiness_reason": state.ota_readiness_reason,
             "ota_message": state.ota_message,

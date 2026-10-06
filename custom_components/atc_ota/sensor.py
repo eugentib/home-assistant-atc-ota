@@ -24,6 +24,8 @@ async def async_setup_entry(hass, entry, async_add_entities) -> None:
                 AtcBatterySensor(manager, address),
                 AtcRssiSensor(manager, address),
                 AtcGattRssiSensor(manager, address),
+                AtcBroadcastSourceSensor(manager, address),
+                AtcOtaRouteSensor(manager, address),
                 AtcOtaReadinessSensor(manager, address),
             ]
         )
@@ -106,6 +108,47 @@ class AtcGattRssiSensor(AtcOtaEntity, SensorEntity):
         }
 
 
+class AtcBroadcastSourceSensor(AtcOtaEntity, SensorEntity):
+    _attr_name = "Broadcast source"
+    _attr_icon = "mdi:access-point"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, manager, address: str) -> None:
+        super().__init__(manager, address)
+        self._attr_unique_id = f"{address}_broadcast_source"
+
+    @property
+    def native_value(self):
+        return self.state_data.strongest_proxy
+
+
+class AtcOtaRouteSensor(AtcOtaEntity, SensorEntity):
+    _attr_name = "OTA route"
+    _attr_icon = "mdi:bluetooth-connect"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, manager, address: str) -> None:
+        super().__init__(manager, address)
+        self._attr_unique_id = f"{address}_ota_route"
+
+    @property
+    def native_value(self):
+        return self.state_data.gatt_proxy
+
+    @property
+    def extra_state_attributes(self):
+        state = self.state_data
+        return {
+            "rssi": state.gatt_rssi,
+            "route_age_seconds": state.gatt_route_age_seconds,
+            "active_connections": state.gatt_active_connections,
+            "feature_flags": state.gatt_feature_flags,
+            "connection_failures": state.gatt_failures,
+            "free_slots": state.gatt_free_slots,
+            "total_slots": state.gatt_slots,
+        }
+
+
 class AtcOtaReadinessSensor(AtcOtaEntity, SensorEntity):
     """Compact preflight summary for the firmware update path."""
 
@@ -135,4 +178,6 @@ class AtcOtaReadinessSensor(AtcOtaEntity, SensorEntity):
             "gatt_failures": state.gatt_failures,
             "gatt_free_slots": state.gatt_free_slots,
             "gatt_slots": state.gatt_slots,
+            "gatt_active_connections": state.gatt_active_connections,
+            "gatt_feature_flags": state.gatt_feature_flags,
         }

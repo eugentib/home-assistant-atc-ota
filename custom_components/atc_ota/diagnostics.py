@@ -26,6 +26,8 @@ async def async_get_config_entry_diagnostics(hass, entry):
             "failures": state.gatt_failures,
             "free_slots": state.gatt_free_slots,
             "slots": state.gatt_slots,
+            "active_connections": state.gatt_active_connections,
+            "feature_flags": state.gatt_feature_flags,
         }
         data["ota_readiness"] = {
             "state": state.ota_readiness,

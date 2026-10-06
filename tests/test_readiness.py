@@ -19,6 +19,9 @@ def check(**kwargs):
         gatt_rssi=-70,
         gatt_failures=0,
         gatt_free_slots=3,
+        gatt_route_age_seconds=5,
+        gatt_route_max_age_seconds=60,
+        gatt_active_connections=True,
     )
     defaults.update(kwargs)
     return mod.evaluate_ota_readiness(**defaults)
@@ -52,3 +55,10 @@ def test_recent_failures_are_reported():
 
 def test_stale_battery_is_not_ready():
     assert check(battery_fresh=False).state == "waiting_for_battery"
+
+def test_stale_gatt_route_is_not_ready():
+    assert check(gatt_route_age_seconds=61).state == "stale_gatt_route"
+
+
+def test_passive_only_esphome_proxy_is_not_ready():
+    assert check(gatt_active_connections=False).state == "no_active_gatt"

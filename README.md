@@ -1,10 +1,18 @@
-# ATC OTA for Home Assistant — v0.3.0
+# ATC OTA for Home Assistant — v0.3.1
 
 ## Compatibility notes
 
 Home Assistant provides `bleak-retry-connector` through its built-in Bluetooth integration, so ATC OTA does not pin or install a second copy. Config-flow imports remain lightweight and Bluetooth runtime code is loaded only after the config entry is set up.
 
 A Home Assistant custom integration for pvvx/ATC Telink thermometers such as **LYWSD03MMC**.
+
+## v0.3.1 route freshness and friendlier proxy visibility
+
+- adds visible **Broadcast source** and **OTA route** diagnostic entities;
+- treats a connectable-history route older than 60 seconds as `stale_gatt_route` instead of `ready`;
+- checks ESPHome's runtime Bluetooth Proxy feature flags and exposes whether the selected route actually advertises `ACTIVE_CONNECTIONS`;
+- reports `no_active_gatt` if an ESPHome route is present but does not support active GATT connections;
+- Firmware release notes now include the live OTA preflight: readiness, battery, broadcast source, OTA/GATT route, route age, active-GATT capability, recent failures and BLE slots.
 
 ## v0.3.0 native device management and OTA readiness
 
