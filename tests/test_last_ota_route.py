@@ -7,6 +7,7 @@ ROOT = Path(__file__).parents[1] / "custom_components" / "atc_ota"
 def test_actual_route_is_taken_from_connected_ha_backend():
     source = (ROOT / "manager.py").read_text(encoding="utf-8")
 
+    assert 'getattr(client, "_connected_scanner", None)' in source
     assert 'getattr(ha_backend, "_connected_scanner", None)' in source
     assert "get_discovered_device_advertisement_data" in source
     assert "_actual_connected_route(client, address)" in source
