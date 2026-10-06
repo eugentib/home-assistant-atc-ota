@@ -202,7 +202,55 @@ class AtcManager:
         self._bthome_parsers: dict[str, BTHomeBluetoothDeviceData] = {}
         self._save_task: asyncio.Task | None = None
         self._last_metadata_attempt: dict[str, float] = {}
+        self._options_backup: dict[str, Any] = {}
+        self.options_recovered_keys: list[str] = []
         self._unsubs: list[Any] = []
+
+    @staticmethod
+    def _known_options(raw: dict[str, Any]) -> dict[str, Any]:
+        """Return only valid ATC OTA option values suitable for backup/restore."""
+        result: dict[str, Any] = {}
+
+        if CONF_LOW_BATTERY_THRESHOLD in raw:
+            try:
+                value = int(raw[CONF_LOW_BATTERY_THRESHOLD])
+            except (TypeError, ValueError):
+                pass
+            else:
+                if 5 <= value <= 80:
+                    result[CONF_LOW_BATTERY_THRESHOLD] = value
+
+        if CONF_AUTO_PROBE_METADATA in raw:
+            value = raw[CONF_AUTO_PROBE_METADATA]
+            if isinstance(value, bool):
+                result[CONF_AUTO_PROBE_METADATA] = value
+
+        if CONF_AUTO_PROBE_MIN_RSSI in raw:
+            try:
+                value = int(raw[CONF_AUTO_PROBE_MIN_RSSI])
+            except (TypeError, ValueError):
+                pass
+            else:
+                if -110 <= value <= -30:
+                    result[CONF_AUTO_PROBE_MIN_RSSI] = value
+
+        return result
+
+    def _effective_options_snapshot(self) -> dict[str, Any]:
+        """Return all effective settings, including defaults, for durable backup."""
+        return {
+            CONF_LOW_BATTERY_THRESHOLD: self.low_battery_threshold,
+            CONF_AUTO_PROBE_METADATA: self.auto_probe,
+            CONF_AUTO_PROBE_MIN_RSSI: self.auto_probe_min_rssi,
+        }
+
+    async def _async_options_updated(self, _hass, _entry) -> None:
+        """Persist changed options immediately without reloading the manager."""
+        self._options_backup = self._effective_options_snapshot()
+        for state in self.devices.values():
+            self._update_ota_readiness(state)
+            self._notify(state.address)
+        await self._async_save()
 
     @property
     def low_battery_threshold(self) -> int:
@@ -218,6 +266,27 @@ class AtcManager:
 
     async def async_setup(self) -> None:
         stored = await self._store.async_load() or {}
+
+        saved_options = self._known_options(stored.get("options_backup", {}))
+        current_options = dict(self.entry.options)
+        restored_options = dict(current_options)
+        self.options_recovered_keys = []
+        for key, value in saved_options.items():
+            if key not in current_options:
+                restored_options[key] = value
+                self.options_recovered_keys.append(key)
+
+        if restored_options != current_options:
+            _LOGGER.warning(
+                "Restoring missing ATC OTA options from integration backup: %s",
+                ", ".join(self.options_recovered_keys),
+            )
+            self.hass.config_entries.async_update_entry(
+                self.entry, options=restored_options
+            )
+
+        self._options_backup = self._effective_options_snapshot()
+
         for address, raw in stored.get("devices", {}).items():
             try:
                 state = DeviceState.from_dict(raw)
@@ -265,6 +334,9 @@ class AtcManager:
             )
         )
 
+        self._unsubs.append(
+            self.entry.add_update_listener(self._async_options_updated)
+        )
         self.entry.async_on_unload(self.async_shutdown)
         self.entry.async_create_background_task(
             self.hass,
@@ -901,8 +973,14 @@ class AtcManager:
         await self._async_save()
 
     async def _async_save(self) -> None:
+        self._options_backup = self._effective_options_snapshot()
         await self._store.async_save(
-            {"devices": {addr: state.persistent() for addr, state in self.devices.items()}}
+            {
+                "devices": {
+                    addr: state.persistent() for addr, state in self.devices.items()
+                },
+                "options_backup": dict(self._options_backup),
+            }
         )
 
     def _notify(self, address: str) -> None:
