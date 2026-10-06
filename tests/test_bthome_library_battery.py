@@ -50,5 +50,5 @@ def test_cached_battery_is_not_exposed_as_live_after_restart():
     sensor = (ROOT / "sensor.py").read_text(encoding="utf-8")
     binary = (ROOT / "binary_sensor.py").read_text(encoding="utf-8")
 
-    assert "return self.state_data.battery_last_seen is not None" in sensor
-    assert "return self.state_data.battery_last_seen is not None" in binary
+    assert "self.manager.battery_is_fresh(self.state_data)" in sensor
+    assert "self.manager.battery_is_fresh(self.state_data)" in binary
