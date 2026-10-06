@@ -30,10 +30,10 @@ def evaluate_ota_readiness(
             "waiting_for_battery",
             "Waiting for a fresh battery advertisement",
         )
-    if battery <= low_battery_threshold:
+    if battery < low_battery_threshold:
         return OtaReadiness(
             "low_battery",
-            f"Battery {battery}% is at/below the {low_battery_threshold}% OTA minimum",
+            f"Battery {battery}% is below the {low_battery_threshold}% OTA minimum",
         )
     if gatt_proxy is None:
         return OtaReadiness(

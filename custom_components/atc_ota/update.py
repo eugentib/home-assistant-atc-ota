@@ -65,9 +65,9 @@ class AtcFirmwareUpdate(AtcOtaEntity, UpdateEntity):
     def release_summary(self):
         state = self.state_data
         battery = "unknown" if state.battery is None else f"{state.battery}%"
-        if state.battery is not None and state.battery <= self.manager.low_battery_threshold:
+        if state.battery is not None and state.battery < self.manager.low_battery_threshold:
             return (
-                f"BLOCKED: battery {battery} is at/below the configured "
+                f"BLOCKED: battery {battery} is below the configured "
                 f"{self.manager.low_battery_threshold}% OTA minimum."
             )
         gatt = (
@@ -102,10 +102,10 @@ class AtcFirmwareUpdate(AtcOtaEntity, UpdateEntity):
         )
 
         warning = ""
-        if state.battery is not None and state.battery <= self.manager.low_battery_threshold:
+        if state.battery is not None and state.battery < self.manager.low_battery_threshold:
             warning = (
                 f"\n\n⚠️ OTA is **blocked** while battery is **{state.battery}%**, "
-                f"at/below the configured minimum of "
+                f"below the configured minimum of "
                 f"**{self.manager.low_battery_threshold}%**."
             )
 
