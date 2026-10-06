@@ -62,3 +62,7 @@ def test_stale_gatt_route_is_not_ready():
 
 def test_passive_only_esphome_proxy_is_not_ready():
     assert check(gatt_active_connections=False).state == "no_active_gatt"
+
+def test_battery_threshold_is_inclusive_minimum():
+    assert check(battery=30).state == "ready"
+    assert check(battery=29).state == "low_battery"
