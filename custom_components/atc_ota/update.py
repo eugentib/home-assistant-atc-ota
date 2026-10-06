@@ -49,7 +49,9 @@ class AtcFirmwareUpdate(AtcOtaEntity, UpdateEntity):
 
     @property
     def in_progress(self):
-        return self.state_data.ota_in_progress
+        # HA checks this with identity ("is not False"), so always return a real
+        # bool even if an old/restored state ever contained 0/1/None.
+        return bool(self.state_data.ota_in_progress)
 
     @property
     def update_percentage(self):
@@ -76,9 +78,10 @@ class AtcFirmwareUpdate(AtcOtaEntity, UpdateEntity):
                 "you intentionally want to accept the risk."
             )
         return (
-            "Firmware is downloaded from the official pvvx/ATC_MiThermometer repository and transferred "
-            "through Home Assistant's shared Bluetooth stack. The integration does not connect directly to "
-            "ESPHome Bluetooth Proxies."
+            "Firmware is obtained from the official pvvx/ATC_MiThermometer repository, validated and "
+            "cached persistently in Home Assistant after the first download. Later updates using the same "
+            "image reuse the local cache. Transfer still goes through Home Assistant's shared Bluetooth "
+            "stack; the integration does not connect directly to ESPHome Bluetooth Proxies."
             + warning
         )
 
@@ -109,5 +112,9 @@ class AtcFirmwareUpdate(AtcOtaEntity, UpdateEntity):
             "strongest_rssi": state.rssi,
             "strongest_proxy": state.strongest_proxy,
             "ota_message": state.ota_message,
+            "ota_progress": state.ota_progress,
+            "firmware_source": state.firmware_source,
+            "firmware_cache_file": state.firmware_cache_file,
+            "firmware_sha256": state.firmware_sha256,
             "last_metadata_error": state.last_metadata_error,
         }

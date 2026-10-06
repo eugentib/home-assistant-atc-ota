@@ -1,10 +1,19 @@
-# ATC OTA for Home Assistant — v0.2.7
+# ATC OTA for Home Assistant — v0.2.8
 
 ## Compatibility notes
 
 Home Assistant provides `bleak-retry-connector` through its built-in Bluetooth integration, so ATC OTA does not pin or install a second copy. Config-flow imports remain lightweight and Bluetooth runtime code is loaded only after the config entry is set up.
 
 A Home Assistant custom integration for pvvx/ATC Telink thermometers such as **LYWSD03MMC**.
+
+## v0.2.8 firmware cache and update lifecycle
+
+- firmware binaries are cached persistently under `/config/.storage/atc_ota_firmware/` after the first successful download;
+- cached images are validated before reuse; corrupt or oversized cache entries are discarded and downloaded again;
+- the firmware entity exposes `firmware_source`, `firmware_cache_file` and `firmware_sha256` diagnostics;
+- `in_progress` now covers the complete update operation, including battery checks, metadata/catalog refresh and firmware preparation, not only the BLE flash loop;
+- `ota_message` reports preflight stages such as battery checking, cache use/download and connection/transfer progress;
+- a per-device install guard keeps Home Assistant's "already in progress" state consistent with the entity state.
 
 ## v0.2.7 battery/OTA fix
 
@@ -14,9 +23,9 @@ A Home Assistant custom integration for pvvx/ATC Telink thermometers such as **L
 - if a pre-OTA active scan does not obtain a fresh battery advertisement, ATC OTA tries the standard Battery Level GATT characteristic before refusing the update;
 - a battery value restored from persistent storage is no longer trusted for OTA until reconfirmed after restart.
 
-## Why v0.2.6 is different
+## Why the v0.2.x integration is different
 
-v0.1.x was a Home Assistant app/add-on that opened its own ESPHome API subscriptions to Bluetooth Proxy nodes. v0.2.6 is a **custom integration inside Home Assistant Core** and uses Home Assistant's existing Bluetooth manager instead.
+v0.1.x was a Home Assistant app/add-on that opened its own ESPHome API subscriptions to Bluetooth Proxy nodes. v0.2.x is a **custom integration inside Home Assistant Core** and uses Home Assistant's existing Bluetooth manager instead.
 
 That means:
 
