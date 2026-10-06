@@ -495,10 +495,18 @@ class AtcManager:
             self.hass, address, connectable=True
         )
         if ble_device is None:
-            await self.async_request_scan(3.0)
-            ble_device = bluetooth.async_ble_device_from_address(
-                self.hass, address, connectable=True
-            )
+            # A previous failed connection or a recent scanner restart may leave
+            # HA without a current connectable-history entry even while passive
+            # advertisements are still arriving. Request a longer active sweep
+            # and give the connectable route time to repopulate.
+            await self.async_request_scan(8.0)
+            deadline = time.monotonic() + 4.0
+            while ble_device is None and time.monotonic() < deadline:
+                ble_device = bluetooth.async_ble_device_from_address(
+                    self.hass, address, connectable=True
+                )
+                if ble_device is None:
+                    await asyncio.sleep(0.25)
         if ble_device is None:
             reason = self._reachability_diagnostics(address)
             extra = f"; {reason}" if reason else ""
@@ -604,10 +612,6 @@ class AtcManager:
                         await asyncio.wait_for(client.disconnect(), timeout=8.0)
                     except Exception as exc:  # noqa: BLE001
                         _LOGGER.warning("Disconnect failed after metadata read for %s: %s", address, exc)
-                try:
-                    bluetooth.async_clear_advertisement_history(self.hass, address)
-                except Exception:  # noqa: BLE001
-                    pass
                 self._notify(address)
                 await self._async_save()
 
@@ -900,10 +904,6 @@ class AtcManager:
                     await asyncio.wait_for(client.disconnect(), timeout=8.0)
                 except Exception as exc:  # noqa: BLE001
                     _LOGGER.warning("Disconnect failed after OTA for %s: %s", address, exc)
-            try:
-                bluetooth.async_clear_advertisement_history(self.hass, address)
-            except Exception:  # noqa: BLE001
-                pass
             self._notify(address)
 
         # Let the thermometer reboot, then refresh metadata through HA later.
