@@ -34,6 +34,10 @@ from .const import (
     ENV_SENSING_UUID,
     OTA_BATTERY_MAX_AGE_SECONDS,
     OTA_BATTERY_SCAN_SECONDS,
+    OTA_BLOCK_PACING_SECONDS,
+    OTA_START_COMMAND_GAP_SECONDS,
+    OTA_WRITE_RETRY_ATTEMPTS,
+    OTA_WRITE_RETRY_BASE_SECONDS,
     METADATA_RETRY_SECONDS,
     OTA_CHAR_UUID,
     STORAGE_KEY,
@@ -739,6 +743,70 @@ class AtcManager:
             self._notify(address)
             await self._async_save()
 
+    @staticmethod
+    def _is_gatt_congested(exc: Exception) -> bool:
+        """Return True only for the ESP-IDF GATT congestion status."""
+        text = f"{type(exc).__name__}: {exc}".lower()
+        return (
+            "congested" in text
+            or "error=143" in text
+            or "error 143" in text
+            or "0x8f" in text
+        )
+
+    async def _ota_write(
+        self,
+        state: DeviceState,
+        client,
+        characteristic,
+        payload: bytes,
+        *,
+        label: str,
+        pacing: float = 0.0,
+    ) -> None:
+        """Write one OTA packet with bounded retry for ESP_GATT_CONGESTED."""
+        delay = OTA_WRITE_RETRY_BASE_SECONDS
+        for attempt in range(1, OTA_WRITE_RETRY_ATTEMPTS + 1):
+            try:
+                await client.write_gatt_char(characteristic, payload, response=False)
+                if pacing > 0:
+                    await asyncio.sleep(pacing)
+                return
+            except Exception as exc:  # noqa: BLE001
+                if not self._is_gatt_congested(exc) or attempt >= OTA_WRITE_RETRY_ATTEMPTS:
+                    raise
+                state.ota_message = (
+                    f"{label}: BLE congested, retry {attempt}/{OTA_WRITE_RETRY_ATTEMPTS}"
+                )
+                self._notify(state.address)
+                _LOGGER.warning(
+                    "BLE congestion while %s for %s; retry %s/%s after %.2fs",
+                    label,
+                    state.address,
+                    attempt,
+                    OTA_WRITE_RETRY_ATTEMPTS,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+                delay = min(delay * 2.0, 1.0)
+
+    async def _ota_read_sync(self, state: DeviceState, client, characteristic) -> None:
+        """Read the OTA characteristic, retrying only explicit BLE congestion."""
+        delay = OTA_WRITE_RETRY_BASE_SECONDS
+        for attempt in range(1, OTA_WRITE_RETRY_ATTEMPTS + 1):
+            try:
+                await client.read_gatt_char(characteristic)
+                return
+            except Exception as exc:  # noqa: BLE001
+                if not self._is_gatt_congested(exc) or attempt >= OTA_WRITE_RETRY_ATTEMPTS:
+                    raise
+                state.ota_message = (
+                    f"OTA sync read: BLE congested, retry {attempt}/{OTA_WRITE_RETRY_ATTEMPTS}"
+                )
+                self._notify(state.address)
+                await asyncio.sleep(delay)
+                delay = min(delay * 2.0, 1.0)
+
     async def _flash(self, address: str, firmware: bytes, target_version: str) -> None:
         """Serialize OTA against metadata GATT reads."""
         async with self._gatt_lock:
@@ -768,24 +836,54 @@ class AtcManager:
             self._notify(address)
 
             await asyncio.sleep(0.50)
-            await client.write_gatt_char(characteristic, b"\x00\xFF", response=False)
-            await asyncio.sleep(0.05)
-            await client.write_gatt_char(characteristic, b"\x01\xFF", response=False)
+            state.ota_message = "Starting Telink OTA (phase 1/2)"
+            self._notify(address)
+            await self._ota_write(
+                state,
+                client,
+                characteristic,
+                b"\x00\xFF",
+                label="OTA start phase 1",
+            )
+            await asyncio.sleep(OTA_START_COMMAND_GAP_SECONDS)
+
+            state.ota_message = "Starting Telink OTA (phase 2/2)"
+            self._notify(address)
+            await self._ota_write(
+                state,
+                client,
+                characteristic,
+                b"\x01\xFF",
+                label="OTA start phase 2",
+            )
             await asyncio.sleep(0.30)
 
             for block_number in range(block_count):
                 start = block_number * BLOCK_SIZE
                 packet = make_block(block_number, padded[start : start + BLOCK_SIZE])
-                await client.write_gatt_char(characteristic, packet, response=False)
+                await self._ota_write(
+                    state,
+                    client,
+                    characteristic,
+                    packet,
+                    label=f"OTA block {block_number + 1}/{block_count}",
+                    pacing=OTA_BLOCK_PACING_SECONDS,
+                )
                 if (block_number + 1) % 8 == 0:
-                    await client.read_gatt_char(characteristic)
+                    await self._ota_read_sync(state, client, characteristic)
                 if block_number == 0 or (block_number + 1) % 32 == 0 or block_number + 1 == block_count:
                     state.ota_progress = min(98, 5 + int(((block_number + 1) / block_count) * 93))
                     state.ota_message = f"Sending block {block_number + 1}/{block_count}"
                     self._notify(address)
                 await asyncio.sleep(0)
 
-            await client.write_gatt_char(characteristic, make_finish(block_count), response=False)
+            await self._ota_write(
+                state,
+                client,
+                characteristic,
+                make_finish(block_count),
+                label="OTA final command",
+            )
             state.ota_progress = 99
             state.ota_message = "Final command sent; waiting for reboot"
             self._notify(address)
