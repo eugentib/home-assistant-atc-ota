@@ -155,6 +155,7 @@ class AtcFirmwareUpdate(AtcOtaEntity, UpdateEntity):
     def extra_state_attributes(self):
         state = self.state_data
         return {
+            "manager_instance": self.manager.instance_id,
             "address": state.address,
             "home_assistant_name": state.ha_name,
             "home_assistant_area": state.ha_area,
