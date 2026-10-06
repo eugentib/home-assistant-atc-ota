@@ -109,6 +109,7 @@ class DeviceState:
     strongest_proxy: str | None = None
     last_seen: float | None = None
     ble_callback_last_seen: float | None = None
+    ble_observation_time: float | None = None
     ble_callback_count: int = 0
     ble_callback_error: str | None = None
     gatt_rssi: int | None = None
@@ -252,6 +253,13 @@ class AtcManager:
                 timedelta(seconds=CATALOG_REFRESH_SECONDS),
             )
         )
+        self._unsubs.append(
+            async_track_time_interval(
+                self.hass,
+                self._async_ble_health_timer,
+                timedelta(seconds=30),
+            )
+        )
 
         self.entry.async_on_unload(self.async_shutdown)
         self.entry.async_create_background_task(
@@ -282,6 +290,59 @@ class AtcManager:
             self.async_refresh_catalog(),
             "ATC OTA catalog refresh",
         )
+
+    @callback
+    def _async_ble_health_timer(self, _now) -> None:
+        """Refresh BLE diagnostics and recover a missed callback from HA history."""
+        last_info_fn = getattr(bluetooth, "async_last_service_info", None)
+        for address, state in tuple(self.devices.items()):
+            if last_info_fn is not None:
+                try:
+                    info = last_info_fn(self.hass, address, connectable=False)
+                except Exception as exc:  # noqa: BLE001
+                    state.ble_callback_error = (
+                        f"history lookup: {type(exc).__name__}: {exc}"
+                    )
+                    info = None
+                if info is not None:
+                    observed = getattr(info, "time", None)
+                    if (
+                        isinstance(observed, (int, float))
+                        and (
+                            state.ble_observation_time is None
+                            or float(observed) > state.ble_observation_time
+                        )
+                    ):
+                        # HA's Bluetooth history advanced but our subscribed
+                        # callback did not. Re-ingest the newest observation.
+                        self._async_bluetooth_event(
+                            info, bluetooth.BluetoothChange.ADVERTISEMENT
+                        )
+                        continue
+
+            try:
+                self._refresh_ble_routes(state)
+            except Exception as exc:  # noqa: BLE001
+                state.ble_callback_error = (
+                    f"health refresh: {type(exc).__name__}: {exc}"
+                )
+                _LOGGER.exception("BLE health refresh failed for %s", address)
+            self._notify(address)
+
+    def ble_callback_age_seconds(self, state: DeviceState) -> int | None:
+        if state.ble_callback_last_seen is None:
+            return None
+        return max(0, int(time.time() - state.ble_callback_last_seen))
+
+    def ble_health(self, state: DeviceState) -> str:
+        age = self.ble_callback_age_seconds(state)
+        if state.ble_callback_error and (age is None or age > 60):
+            return "error"
+        if age is None:
+            return "unknown"
+        if age > 60:
+            return "stale"
+        return "receiving"
 
     @staticmethod
     def _normalize_address(value: str | None) -> str:
@@ -692,6 +753,9 @@ class AtcManager:
         # can show that ATC OTA is still receiving Bluetooth advertisements.
         state.ble_callback_count += 1
         state.ble_callback_last_seen = time.time()
+        observed = getattr(info, "time", None)
+        if isinstance(observed, (int, float)):
+            state.ble_observation_time = float(observed)
         state.ble_callback_error = None
         advertisement_time = self._advertisement_wall_time(info)
         state.last_seen = advertisement_time
