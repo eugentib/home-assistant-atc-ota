@@ -32,6 +32,7 @@ from .const import (
     DEFAULT_LOW_BATTERY_THRESHOLD,
     DOMAIN,
     ENV_SENSING_UUID,
+    GATT_ROUTE_MAX_AGE_SECONDS,
     OTA_BATTERY_MAX_AGE_SECONDS,
     OTA_BATTERY_SCAN_SECONDS,
     OTA_BLOCK_PACING_SECONDS,
@@ -110,6 +111,8 @@ class DeviceState:
     gatt_failures: int | None = None
     gatt_free_slots: int | None = None
     gatt_slots: int | None = None
+    gatt_active_connections: bool | None = None
+    gatt_feature_flags: int | None = None
     ota_readiness: str = "unknown"
     ota_readiness_reason: str | None = None
     last_metadata_success: float | None = None
@@ -415,6 +418,45 @@ class AtcManager:
                 return name, scanner
         return str(source or "unknown"), None
 
+    def _esphome_gatt_capability(self, source: str) -> tuple[bool | None, int | None]:
+        """Return ESPHome ACTIVE_CONNECTIONS capability for a scanner source.
+
+        Home Assistant registers ESPHome scanners as connectable based on the same
+        feature flag, but surfacing it explicitly makes passive-only/stale routes
+        understandable to the user and restores the useful v0.1.x capability view.
+        """
+        source_norm = self._normalize_address(source)
+        for entry in self.hass.config_entries.async_entries("esphome"):
+            runtime = getattr(entry, "runtime_data", None)
+            info = getattr(runtime, "device_info", None)
+            if info is None:
+                continue
+            bt_mac = self._normalize_address(
+                getattr(info, "bluetooth_mac_address", None)
+            )
+            if bt_mac != source_norm:
+                continue
+
+            flags: int | None = None
+            compat = getattr(info, "bluetooth_proxy_feature_flags_compat", None)
+            if callable(compat):
+                try:
+                    flags = int(compat(getattr(runtime, "api_version", None)))
+                except Exception:
+                    flags = None
+            if flags is None:
+                try:
+                    flags = int(
+                        getattr(info, "bluetooth_proxy_feature_flags", 0) or 0
+                    )
+                except Exception:
+                    flags = None
+            if flags is None:
+                return None, None
+            # aioesphomeapi BluetoothProxyFeature.ACTIVE_CONNECTIONS == 1 << 1.
+            return bool(flags & (1 << 1)), flags
+        return None, None
+
     def _update_ota_readiness(self, state: DeviceState) -> None:
         """Derive a user-facing OTA readiness state from live preflight data."""
         result = evaluate_ota_readiness(
@@ -425,6 +467,9 @@ class AtcManager:
             gatt_rssi=state.gatt_rssi,
             gatt_failures=state.gatt_failures,
             gatt_free_slots=state.gatt_free_slots,
+            gatt_route_age_seconds=state.gatt_route_age_seconds,
+            gatt_route_max_age_seconds=GATT_ROUTE_MAX_AGE_SECONDS,
+            gatt_active_connections=state.gatt_active_connections,
         )
         state.ota_readiness = result.state
         state.ota_readiness_reason = result.reason
@@ -461,6 +506,8 @@ class AtcManager:
             state.gatt_failures = None
             state.gatt_free_slots = None
             state.gatt_slots = None
+            state.gatt_active_connections = None
+            state.gatt_feature_flags = None
             self._update_ota_readiness(state)
             return
 
@@ -472,9 +519,14 @@ class AtcManager:
             else None
         )
 
+        route_source = str(getattr(route, "source", "") or "")
         state.gatt_proxy, scanner = self._scanner_name_for_source(
-            address, str(getattr(route, "source", "") or ""), connectable=True
+            address, route_source, connectable=True
         )
+        (
+            state.gatt_active_connections,
+            state.gatt_feature_flags,
+        ) = self._esphome_gatt_capability(route_source)
         state.gatt_failures = None
         state.gatt_free_slots = None
         state.gatt_slots = None
