@@ -162,6 +162,7 @@ class AtcFirmwareUpdate(AtcOtaEntity, UpdateEntity):
             "battery_last_seen": state.battery_last_seen,
             "battery_source": state.battery_source,
             "battery_age_seconds": self.manager.battery_age_seconds(state),
+            "battery_minimum": self.manager.low_battery_threshold,
             "broadcast_rssi": state.rssi,
             "broadcast_proxy": state.strongest_proxy,
             "gatt_rssi": state.gatt_rssi,
