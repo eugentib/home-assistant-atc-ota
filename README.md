@@ -1,10 +1,18 @@
-# ATC OTA for Home Assistant — v0.3.9
+# ATC OTA for Home Assistant — v0.3.10
 
 ## Compatibility notes
 
 Home Assistant provides `bleak-retry-connector` through its built-in Bluetooth integration, so ATC OTA does not pin or install a second copy. Config-flow imports remain lightweight and Bluetooth runtime code is loaded only after the config entry is set up.
 
 A Home Assistant custom integration for pvvx/ATC Telink thermometers such as **LYWSD03MMC**.
+
+## v0.3.10 prevent split-brain OTA managers
+
+- stops reloading the config entry when ATC OTA options are changed; all current options are read live from `entry.options` and do not require a reload;
+- tracks the Home Assistant service task performing each OTA and cancels it explicitly if the config entry is unloaded for any other reason;
+- refuses new OTA work once manager shutdown begins;
+- exposes a short `manager_instance` identifier on the Firmware entity so a stale/duplicate manager can be diagnosed immediately;
+- prevents an old manager from continuing a physical OTA while a freshly reloaded manager reports `in_progress: false`.
 
 ## v0.3.9 harden the BLE ingest hot path
 
