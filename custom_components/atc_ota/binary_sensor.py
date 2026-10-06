@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass, BinarySensorEntity
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers.entity import EntityCategory
 
 from .entity import AtcOtaEntity
 from .manager import signal_device_added
@@ -27,6 +28,7 @@ async def async_setup_entry(hass, entry, async_add_entities) -> None:
 class AtcLowBatteryBinarySensor(AtcOtaEntity, BinarySensorEntity):
     _attr_name = "Low battery"
     _attr_device_class = BinarySensorDeviceClass.BATTERY
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, manager, address: str) -> None:
         super().__init__(manager, address)
