@@ -1,10 +1,18 @@
-# ATC OTA for Home Assistant — v0.3.2
+# ATC OTA for Home Assistant — v0.3.3
 
 ## Compatibility notes
 
 Home Assistant provides `bleak-retry-connector` through its built-in Bluetooth integration, so ATC OTA does not pin or install a second copy. Config-flow imports remain lightweight and Bluetooth runtime code is loaded only after the config entry is set up.
 
 A Home Assistant custom integration for pvvx/ATC Telink thermometers such as **LYWSD03MMC**.
+
+## v0.3.3 align live battery parsing with Home Assistant BTHome
+
+- uses the same `bthome-ble==3.23.4` parser as Home Assistant's native BTHome integration for live battery advertisements;
+- keeps the built-in ATC parser only as a compatibility fallback;
+- fixes stale ATC OTA battery values that could differ from the BTHome device page;
+- after Home Assistant restart, cached battery data is no longer exposed as a live Battery/Low battery entity until a fresh BTHome or GATT reading arrives;
+- adds regression coverage with a pvvx BTHome v2 payload carrying `Battery=29%`.
 
 ## v0.3.2 record the actual OTA route used
 

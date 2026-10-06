@@ -51,6 +51,10 @@ class AtcBatterySensor(AtcOtaEntity, SensorEntity):
     def native_value(self):
         return self.state_data.battery
 
+    @property
+    def available(self) -> bool:
+        return self.state_data.battery_last_seen is not None
+
 
 class AtcRssiSensor(AtcOtaEntity, SensorEntity):
     """Strongest passive advertisement RSSI, regardless of GATT capability."""
