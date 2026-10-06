@@ -11,7 +11,7 @@ from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
-    OptionsFlowWithReload,
+    OptionsFlow,
 )
 from homeassistant.core import callback
 
@@ -84,8 +84,8 @@ class AtcOtaConfigFlow(ConfigFlow, domain=DOMAIN):
         return AtcOtaOptionsFlow()
 
 
-class AtcOtaOptionsFlow(OptionsFlowWithReload):
-    """ATC OTA options; Home Assistant supplies self.config_entry."""
+class AtcOtaOptionsFlow(OptionsFlow):
+    """ATC OTA options applied live without reloading the config entry."""
 
     @override
     async def async_step_init(
