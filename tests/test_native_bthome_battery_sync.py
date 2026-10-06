@@ -10,7 +10,7 @@ def test_native_bthome_battery_is_used_as_authoritative_source():
     assert "async_entries_for_config_entry" in source
     assert 'entity.platform != "bthome"' in source
     assert '!= "battery"' in source
-    assert "state.last_reported" in source
+    assert '"last_reported"' in source
     assert 'state.battery_source = "home_assistant_bthome"' in source
 
 
