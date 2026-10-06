@@ -1,10 +1,18 @@
-# ATC OTA for Home Assistant — v0.2.12
+# ATC OTA for Home Assistant — v0.2.13
 
 ## Compatibility notes
 
 Home Assistant provides `bleak-retry-connector` through its built-in Bluetooth integration, so ATC OTA does not pin or install a second copy. Config-flow imports remain lightweight and Bluetooth runtime code is loaded only after the config entry is set up.
 
 A Home Assistant custom integration for pvvx/ATC Telink thermometers such as **LYWSD03MMC**.
+
+## v0.2.13 verify OTA before reporting success
+
+- removes the optimistic assignment that marked the target firmware as installed immediately after sending the final OTA command;
+- waits for the thermometer to reboot and confirms the target version from an explicit BTHome firmware-version advertisement or a GATT metadata read;
+- retries GATT verification up to three times after reboot;
+- reports the update as failed/unverified if the device still reports the old version or cannot be verified;
+- allows explicit BTHome firmware-version objects to refresh `current_version` after an upgrade instead of only filling it when empty.
 
 ## v0.2.12 faster Home Assistant startup
 
