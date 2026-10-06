@@ -1,10 +1,19 @@
-# ATC OTA for Home Assistant — v0.3.10
+# ATC OTA for Home Assistant — v0.3.11
 
 ## Compatibility notes
 
 Home Assistant provides `bleak-retry-connector` through its built-in Bluetooth integration, so ATC OTA does not pin or install a second copy. Config-flow imports remain lightweight and Bluetooth runtime code is loaded only after the config entry is set up.
 
 A Home Assistant custom integration for pvvx/ATC Telink thermometers such as **LYWSD03MMC**.
+
+## v0.3.11 protect options across integration updates
+
+- keeps Home Assistant `ConfigEntry.options` as the authoritative source for configured values;
+- stores a second copy of the effective ATC OTA options in the integration's existing persistent storage;
+- restores only option keys that are missing from the Home Assistant config entry; an explicitly configured value always wins over the backup;
+- saves option changes immediately through a config-entry update listener, without reloading the integration;
+- exposes `entry_options`, `options_backup` and `options_recovered_keys` for diagnostics;
+- this cannot reconstruct a custom value that was already lost before v0.3.11, so it must be configured once after upgrading if necessary.
 
 ## v0.3.10 prevent split-brain OTA managers
 
