@@ -4,7 +4,7 @@ from __future__ import annotations
 
 DOMAIN = "atc_ota"
 NAME = "ATC OTA"
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 
 BTHOME_UUID = "0000fcd2-0000-1000-8000-00805f9b34fb"
 ENV_SENSING_UUID = "0000181a-0000-1000-8000-00805f9b34fb"
@@ -35,6 +35,7 @@ CATALOG_REFRESH_SECONDS = 6 * 60 * 60
 METADATA_RETRY_SECONDS = 30 * 60
 OTA_BATTERY_MAX_AGE_SECONDS = 180
 OTA_BATTERY_SCAN_SECONDS = 8
+GATT_ROUTE_MAX_AGE_SECONDS = 60
 
 # ESPHome/ESP-IDF may report ESP_GATT_CONGESTED (0x8F / 143) when
 # write-without-response traffic reaches the proxy faster than Bluedroid can
