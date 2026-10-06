@@ -1,7 +1,7 @@
 {
   "domain": "atc_ota",
   "name": "ATC OTA",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "config_flow": true,
   "dependencies": [
     "bluetooth",
@@ -10,7 +10,9 @@
   "documentation": "https://github.com/eugentib/home-assistant-atc-ota",
   "issue_tracker": "https://github.com/eugentib/home-assistant-atc-ota/issues",
   "iot_class": "local_push",
-  "requirements": [],
+  "requirements": [
+    "bthome-ble==3.23.4"
+  ],
   "codeowners": [
     "@eugentib"
   ],
