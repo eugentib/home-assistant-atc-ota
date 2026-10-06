@@ -151,7 +151,14 @@ class AtcManager:
         stored = await self._store.async_load() or {}
         for address, raw in stored.get("devices", {}).items():
             try:
-                self.devices[address.upper()] = DeviceState.from_dict(raw)
+                state = DeviceState.from_dict(raw)
+                # Cached battery remains useful for the UI, but it must not satisfy
+                # the OTA safety gate after a Home Assistant restart. Reconfirm it
+                # from a fresh BTHome advertisement or GATT read first. This also
+                # prevents a bogus value persisted by the v0.2.6 parser from being
+                # trusted immediately after upgrading to v0.2.7.
+                state.battery_last_seen = None
+                self.devices[address.upper()] = state
             except (TypeError, ValueError):
                 _LOGGER.warning("Ignoring invalid stored ATC OTA device %s", address)
 
@@ -685,10 +692,28 @@ class AtcManager:
                 and state.battery_last_seen is not None
                 and now - state.battery_last_seen <= OTA_BATTERY_MAX_AGE_SECONDS
             )
+
+            # A pvvx device can rotate BTHome measurements between advertisements.
+            # If the active scan did not happen to catch the battery object, use the
+            # standard Battery Level GATT characteristic as a second authoritative
+            # source before refusing the OTA operation.
+            if not battery_fresh:
+                try:
+                    await self.async_refresh_device(address)
+                except Exception as exc:  # noqa: BLE001
+                    _LOGGER.debug("Pre-OTA GATT battery refresh failed: %s", exc)
+
+                now = time.time()
+                battery_fresh = (
+                    state.battery is not None
+                    and state.battery_last_seen is not None
+                    and now - state.battery_last_seen <= OTA_BATTERY_MAX_AGE_SECONDS
+                )
+
             if not battery_fresh:
                 raise HomeAssistantError(
-                    "OTA refused because a recent battery level could not be obtained. "
-                    "Wait for a BTHome battery advertisement and try again."
+                    "OTA refused because a recent battery level could not be obtained "
+                    "from BTHome or the Battery Level GATT characteristic."
                 )
 
             if state.battery <= self.low_battery_threshold:
