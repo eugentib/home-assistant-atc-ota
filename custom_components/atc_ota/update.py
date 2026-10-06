@@ -38,19 +38,19 @@ class AtcFirmwareUpdate(AtcOtaEntity, UpdateEntity):
     def __init__(self, manager, address: str) -> None:
         super().__init__(manager, address)
         self._attr_unique_id = f"{address}_firmware"
-        self._sync_progress_attrs()
 
-    def _sync_progress_attrs(self) -> None:
-        """Keep Home Assistant's native update progress attributes in sync."""
-        state = self.state_data
-        self._attr_in_progress = bool(state.ota_in_progress)
-        self._attr_update_percentage = (
-            state.ota_progress if state.ota_in_progress else None
-        )
+    @property
+    def in_progress(self) -> bool:
+        """Return the manager's live OTA lifecycle state without cached indirection."""
+        return bool(self.state_data.ota_in_progress)
+
+    @property
+    def update_percentage(self):
+        """Return live OTA progress while an install is running."""
+        return self.state_data.ota_progress if self.state_data.ota_in_progress else None
 
     def _async_manager_updated(self) -> None:
-        """Sync native update progress before publishing the new entity state."""
-        self._sync_progress_attrs()
+        """Publish manager lifecycle changes immediately."""
         self.async_write_ha_state()
 
     @property

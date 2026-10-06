@@ -1,10 +1,18 @@
-# ATC OTA for Home Assistant — v0.3.6
+# ATC OTA for Home Assistant — v0.3.7
 
 ## Compatibility notes
 
 Home Assistant provides `bleak-retry-connector` through its built-in Bluetooth integration, so ATC OTA does not pin or install a second copy. Config-flow imports remain lightweight and Bluetooth runtime code is loaded only after the config entry is set up.
 
 A Home Assistant custom integration for pvvx/ATC Telink thermometers such as **LYWSD03MMC**.
+
+## v0.3.7 visible OTA lifecycle and live progress
+
+- makes the firmware update entity read `in_progress` and `update_percentage` directly from the manager's live OTA state instead of mirroring them through cached `_attr_` values;
+- adds visible **OTA progress** and **OTA status** diagnostic sensors so the current phase remains visible even when the Home Assistant update dialog does not render a progress bar;
+- keeps Home Assistant's standard second-click guard: a second install request while the first is still running is intentionally rejected as already in progress;
+- recalculates OTA readiness immediately after a GATT battery refresh, fixing stale combinations such as `Battery=28%` with `OTA readiness=weak_signal`;
+- uses the centralized battery freshness helper throughout OTA preflight.
 
 ## v0.3.6 real BLE advertisement freshness
 
