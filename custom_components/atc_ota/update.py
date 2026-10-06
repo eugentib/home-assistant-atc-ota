@@ -38,6 +38,20 @@ class AtcFirmwareUpdate(AtcOtaEntity, UpdateEntity):
     def __init__(self, manager, address: str) -> None:
         super().__init__(manager, address)
         self._attr_unique_id = f"{address}_firmware"
+        self._sync_progress_attrs()
+
+    def _sync_progress_attrs(self) -> None:
+        """Keep Home Assistant's native update progress attributes in sync."""
+        state = self.state_data
+        self._attr_in_progress = bool(state.ota_in_progress)
+        self._attr_update_percentage = (
+            state.ota_progress if state.ota_in_progress else None
+        )
+
+    def _async_manager_updated(self) -> None:
+        """Sync native update progress before publishing the new entity state."""
+        self._sync_progress_attrs()
+        self.async_write_ha_state()
 
     @property
     def installed_version(self):
@@ -46,16 +60,6 @@ class AtcFirmwareUpdate(AtcOtaEntity, UpdateEntity):
     @property
     def latest_version(self):
         return self.state_data.latest_version
-
-    @property
-    def in_progress(self):
-        # HA checks this with identity ("is not False"), so always return a real
-        # bool even if an old/restored state ever contained 0/1/None.
-        return bool(self.state_data.ota_in_progress)
-
-    @property
-    def update_percentage(self):
-        return self.state_data.ota_progress if self.state_data.ota_in_progress else None
 
     @property
     def release_summary(self):
