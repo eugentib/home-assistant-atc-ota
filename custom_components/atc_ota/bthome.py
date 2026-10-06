@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 # Object sizes from the BTHome v2 format for the common sensor values pvvx emits.
-# Unknown objects stop the structured parser; battery has a conservative fallback.
+# Unknown objects stop the structured parser. BTHome v2 object IDs are ordered,
+# so a battery object (0x01) cannot validly appear after an unknown higher ID.
 _OBJECT_SIZES: dict[int, int] = {
     0x00: 1,  # packet id
     0x01: 1,  # battery
@@ -16,7 +17,35 @@ _OBJECT_SIZES: dict[int, int] = {
     0x08: 2,  # dew point
     0x09: 1,  # count
     0x0C: 2,  # voltage
+    0x0F: 1,  # generic boolean
+    0x10: 1,  # power (binary)
+    0x11: 1,  # opening (binary)
     0x12: 2,  # CO2
+    0x15: 1,  # battery low (binary)
+    0x16: 1,  # battery charging (binary)
+    0x17: 1,  # carbon monoxide (binary)
+    0x18: 1,  # cold (binary)
+    0x19: 1,  # connectivity (binary)
+    0x1A: 1,  # door (binary)
+    0x1B: 1,  # garage door (binary)
+    0x1C: 1,  # gas (binary)
+    0x1D: 1,  # heat (binary)
+    0x1E: 1,  # light (binary)
+    0x1F: 1,  # lock (binary)
+    0x20: 1,  # moisture (binary)
+    0x21: 1,  # motion (binary)
+    0x22: 1,  # moving (binary)
+    0x23: 1,  # occupancy (binary)
+    0x24: 1,  # plug (binary)
+    0x25: 1,  # presence (binary)
+    0x26: 1,  # problem (binary)
+    0x27: 1,  # running (binary)
+    0x28: 1,  # safety (binary)
+    0x29: 1,  # smoke (binary)
+    0x2A: 1,  # sound (binary)
+    0x2B: 1,  # tamper (binary)
+    0x2C: 1,  # vibration (binary)
+    0x2D: 1,  # window (binary)
     0x2E: 1,
     0x2F: 1,
     0x3D: 2,
@@ -106,17 +135,5 @@ def parse_bthome_v2(payload: bytes | bytearray) -> BTHomeValues:
             result.device_type_id = int.from_bytes(value, "little")
         elif object_id in (0xF1, 0xF2):
             result.firmware_version = _version_from_bytes(value)
-
-    # pvvx can emit battery in a separate BTHome packet. If an uncommon object
-    # before it prevented structured parsing, accept only an unambiguous 0x01,
-    # percentage pair in the short payload. This is deliberately conservative.
-    if result.battery is None:
-        candidates = [
-            data[i + 1]
-            for i in range(1, len(data) - 1)
-            if data[i] == 0x01 and data[i + 1] <= 100
-        ]
-        if len(candidates) == 1:
-            result.battery = int(candidates[0])
 
     return result
