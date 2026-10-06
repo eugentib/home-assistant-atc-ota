@@ -22,6 +22,14 @@ async def async_get_config_entry_diagnostics(hass, entry):
             "age_seconds": manager.battery_age_seconds(state),
             "fresh": manager.battery_is_fresh(state),
         }
+        data["ble_ingest"] = {
+            "health": manager.ble_health(state),
+            "callback_count": state.ble_callback_count,
+            "callback_age_seconds": manager.ble_callback_age_seconds(state),
+            "last_callback": state.ble_callback_last_seen,
+            "observation_time": state.ble_observation_time,
+            "last_error": state.ble_callback_error,
+        }
         data["broadcast"] = {
             "rssi": state.rssi,
             "proxy": state.strongest_proxy,
