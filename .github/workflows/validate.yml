@@ -11,5 +11,5 @@ jobs:
         with:
           python-version: "3.13"
       - run: python -m compileall -q custom_components/atc_ota
-      - run: pip install pytest
+      - run: pip install pytest bthome-ble==3.23.4
       - run: pytest -q
