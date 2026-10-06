@@ -13,10 +13,12 @@ def test_battery_freshness_uses_real_bluetooth_observation_time():
     assert "state.battery_last_seen = advertisement_time" in source
 
 
-def test_scanner_history_seed_does_not_retimestamp_old_battery():
+def test_bluetooth_callback_replay_preserves_original_advertisement_time():
     source = (ROOT / "manager.py").read_text(encoding="utf-8")
 
-    assert "for info in bluetooth.async_discovered_service_info" in source
+    # HA's async_register_callback replays matching scanner history itself.
+    # We intentionally do not walk async_discovered_service_info a second time.
+    assert "for info in bluetooth.async_discovered_service_info" not in source
     assert "advertisement_time = self._advertisement_wall_time(info)" in source
     assert "state.last_seen = advertisement_time" in source
     assert "state.battery_last_seen = time.time()" not in source.split(
