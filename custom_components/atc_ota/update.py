@@ -91,6 +91,7 @@ class AtcFirmwareUpdate(AtcOtaEntity, UpdateEntity):
             f"{state.gatt_rssi if state.gatt_rssi is not None else 'unknown'} dBm"
         )
         battery_age = self.manager.battery_age_seconds(state)
+        ble_age = self.manager.ble_callback_age_seconds(state)
         route_age = (
             f"{state.gatt_route_age_seconds}s"
             if state.gatt_route_age_seconds is not None
@@ -118,6 +119,8 @@ class AtcFirmwareUpdate(AtcOtaEntity, UpdateEntity):
             f"- **Battery source:** {state.battery_source or 'unknown'}\n"
             f"- **Battery age:** {f'{battery_age}s' if battery_age is not None else 'unknown'}\n"
             f"- **Configured battery minimum:** {self.manager.low_battery_threshold}%\n"
+            f"- **BLE ingest:** {self.manager.ble_health(state)}"
+            f"{f' / {ble_age}s since callback' if ble_age is not None else ''}\n"
             f"- **Broadcast source:** {broadcast}\n"
             f"- **OTA/GATT route:** {gatt}\n"
             f"- **GATT route age:** {route_age}\n"
@@ -164,6 +167,11 @@ class AtcFirmwareUpdate(AtcOtaEntity, UpdateEntity):
             "battery_source": state.battery_source,
             "battery_age_seconds": self.manager.battery_age_seconds(state),
             "battery_minimum": self.manager.low_battery_threshold,
+            "ble_health": self.manager.ble_health(state),
+            "ble_callback_count": state.ble_callback_count,
+            "ble_callback_age_seconds": self.manager.ble_callback_age_seconds(state),
+            "ble_callback_last_seen": state.ble_callback_last_seen,
+            "ble_callback_error": state.ble_callback_error,
             "broadcast_rssi": state.rssi,
             "broadcast_proxy": state.strongest_proxy,
             "gatt_rssi": state.gatt_rssi,
