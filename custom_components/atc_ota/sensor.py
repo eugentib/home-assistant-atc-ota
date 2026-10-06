@@ -53,7 +53,16 @@ class AtcBatterySensor(AtcOtaEntity, SensorEntity):
 
     @property
     def available(self) -> bool:
-        return self.state_data.battery_last_seen is not None
+        return self.manager.battery_is_fresh(self.state_data)
+
+    @property
+    def extra_state_attributes(self):
+        state = self.state_data
+        return {
+            "source": state.battery_source,
+            "age_seconds": self.manager.battery_age_seconds(state),
+            "last_seen": state.battery_last_seen,
+        }
 
 
 class AtcRssiSensor(AtcOtaEntity, SensorEntity):
@@ -205,6 +214,8 @@ class AtcOtaReadinessSensor(AtcOtaEntity, SensorEntity):
         return {
             "reason": state.ota_readiness_reason,
             "battery": state.battery,
+            "battery_source": state.battery_source,
+            "battery_age_seconds": self.manager.battery_age_seconds(state),
             "broadcast_proxy": state.strongest_proxy,
             "broadcast_rssi": state.rssi,
             "gatt_proxy": state.gatt_proxy,
