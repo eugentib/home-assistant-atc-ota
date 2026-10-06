@@ -49,7 +49,9 @@ class AtcFirmwareUpdate(AtcOtaEntity, UpdateEntity):
 
     @property
     def in_progress(self):
-        return self.state_data.ota_in_progress
+        # HA checks this with identity ("is not False"), so always return a real
+        # bool even if an old/restored state ever contained 0/1/None.
+        return bool(self.state_data.ota_in_progress)
 
     @property
     def update_percentage(self):
