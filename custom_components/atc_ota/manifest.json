@@ -1,7 +1,7 @@
 {
   "domain": "atc_ota",
   "name": "ATC OTA",
-  "version": "0.2.10",
+  "version": "0.2.11",
   "config_flow": true,
   "dependencies": [
     "bluetooth",
