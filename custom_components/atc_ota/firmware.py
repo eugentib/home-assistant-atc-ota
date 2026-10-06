@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -123,10 +124,12 @@ async def get_cached_firmware(hass, choice: FirmwareChoice) -> FirmwarePayload:
     cache_path = cache_dir / cache_name
 
     cached = await hass.async_add_executor_job(
-        read_cached_firmware,
-        cache_path,
-        max_size=MAX_FIRMWARE_SIZE,
-        validator=validate_firmware,
+        partial(
+            read_cached_firmware,
+            cache_path,
+            max_size=MAX_FIRMWARE_SIZE,
+            validator=validate_firmware,
+        )
     )
     if cached is not None:
         return FirmwarePayload(
