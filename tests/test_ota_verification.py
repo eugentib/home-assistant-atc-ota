@@ -15,7 +15,8 @@ def test_ota_does_not_assume_target_version():
 def test_explicit_bthome_firmware_version_can_refresh_current_version():
     source = MANAGER.read_text(encoding="utf-8")
 
-    assert "if parsed.firmware_version:" in source
+    assert "if firmware:" in source
+    assert "state.current_version = firmware" in source
     assert "if parsed.firmware_version and not state.current_version:" not in source
 
 
