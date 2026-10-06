@@ -25,6 +25,7 @@ async def async_setup_entry(hass, entry, async_add_entities) -> None:
                 AtcRssiSensor(manager, address),
                 AtcGattRssiSensor(manager, address),
                 AtcBroadcastSourceSensor(manager, address),
+                AtcBleHealthSensor(manager, address),
                 AtcOtaRouteSensor(manager, address),
                 AtcLastOtaRouteSensor(manager, address),
                 AtcOtaProgressSensor(manager, address),
@@ -136,6 +137,34 @@ class AtcBroadcastSourceSensor(AtcOtaEntity, SensorEntity):
     @property
     def native_value(self):
         return self.state_data.strongest_proxy
+
+
+class AtcBleHealthSensor(AtcOtaEntity, SensorEntity):
+    """Health of the ATC OTA BLE ingest path."""
+
+    _attr_name = "BLE health"
+    _attr_icon = "mdi:bluetooth-audio"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, manager, address: str) -> None:
+        super().__init__(manager, address)
+        self._attr_unique_id = f"{address}_ble_health"
+
+    @property
+    def native_value(self):
+        return self.manager.ble_health(self.state_data)
+
+    @property
+    def extra_state_attributes(self):
+        state = self.state_data
+        return {
+            "callback_count": state.ble_callback_count,
+            "callback_age_seconds": self.manager.ble_callback_age_seconds(state),
+            "last_callback": state.ble_callback_last_seen,
+            "last_advertisement": state.last_seen,
+            "observation_time": state.ble_observation_time,
+            "last_error": state.ble_callback_error,
+        }
 
 
 class AtcOtaRouteSensor(AtcOtaEntity, SensorEntity):
