@@ -576,13 +576,19 @@ class AtcManager:
             return bool(flags & (1 << 1)), flags
         return None, None
 
+    def battery_age_seconds(self, state: DeviceState) -> int | None:
+        if state.battery_last_seen is None:
+            return None
+        return max(0, int(time.time() - state.battery_last_seen))
+
+    def battery_is_fresh(self, state: DeviceState) -> bool:
+        age = self.battery_age_seconds(state)
+        return age is not None and age <= OTA_BATTERY_MAX_AGE_SECONDS
+
     def _update_ota_readiness(self, state: DeviceState) -> None:
         """Derive a user-facing OTA readiness state from live preflight data."""
         self._sync_native_bthome_battery(state)
-        battery_fresh = (
-            state.battery_last_seen is not None
-            and time.time() - state.battery_last_seen <= OTA_BATTERY_MAX_AGE_SECONDS
-        )
+        battery_fresh = self.battery_is_fresh(state)
         result = evaluate_ota_readiness(
             battery=state.battery,
             battery_fresh=battery_fresh,
