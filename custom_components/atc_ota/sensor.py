@@ -26,6 +26,7 @@ async def async_setup_entry(hass, entry, async_add_entities) -> None:
                 AtcGattRssiSensor(manager, address),
                 AtcBroadcastSourceSensor(manager, address),
                 AtcOtaRouteSensor(manager, address),
+                AtcLastOtaRouteSensor(manager, address),
                 AtcOtaReadinessSensor(manager, address),
             ]
         )
@@ -146,6 +147,36 @@ class AtcOtaRouteSensor(AtcOtaEntity, SensorEntity):
             "connection_failures": state.gatt_failures,
             "free_slots": state.gatt_free_slots,
             "total_slots": state.gatt_slots,
+        }
+
+
+class AtcLastOtaRouteSensor(AtcOtaEntity, SensorEntity):
+    """Route actually used by the most recent OTA connection."""
+
+    _attr_name = "Last OTA route"
+    _attr_icon = "mdi:history"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, manager, address: str) -> None:
+        super().__init__(manager, address)
+        self._attr_unique_id = f"{address}_last_ota_route"
+
+    @property
+    def native_value(self):
+        return self.state_data.last_ota_proxy
+
+    @property
+    def available(self) -> bool:
+        return self.state_data.last_ota_result is not None
+
+    @property
+    def extra_state_attributes(self):
+        state = self.state_data
+        return {
+            "rssi": state.last_ota_rssi,
+            "result": state.last_ota_result,
+            "timestamp": state.last_ota_at,
+            "detail": state.last_ota_detail,
         }
 
 
