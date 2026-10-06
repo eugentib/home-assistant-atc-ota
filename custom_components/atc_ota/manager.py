@@ -140,6 +140,7 @@ class AtcManager:
         self._ota_lock = asyncio.Lock()
         self._installing_addresses: set[str] = set()
         self._metadata_tasks: dict[str, asyncio.Task] = {}
+        self._save_task: asyncio.Task | None = None
         self._last_metadata_attempt: dict[str, float] = {}
         self._unsubs: list[Any] = []
 
@@ -201,7 +202,11 @@ class AtcManager:
             self._async_bluetooth_event(info, bluetooth.BluetoothChange.ADVERTISEMENT)
 
         self.entry.async_on_unload(self.async_shutdown)
-        self.hass.async_create_task(self.async_refresh_catalog(), "ATC OTA catalog refresh")
+        self.entry.async_create_background_task(
+            self.hass,
+            self.async_refresh_catalog(),
+            "ATC OTA catalog refresh",
+        )
 
     @callback
     def async_shutdown(self) -> None:
@@ -211,10 +216,17 @@ class AtcManager:
         for task in self._metadata_tasks.values():
             task.cancel()
         self._metadata_tasks.clear()
+        if self._save_task is not None:
+            self._save_task.cancel()
+            self._save_task = None
 
     @callback
     def _async_catalog_timer(self, _now) -> None:
-        self.hass.async_create_task(self.async_refresh_catalog(), "ATC OTA catalog refresh")
+        self.entry.async_create_background_task(
+            self.hass,
+            self.async_refresh_catalog(),
+            "ATC OTA catalog refresh",
+        )
 
     @staticmethod
     def _normalize_address(value: str | None) -> str:
@@ -393,7 +405,7 @@ class AtcManager:
         if is_new:
             async_dispatcher_send(self.hass, signal_device_added(self.entry.entry_id), address)
         self._notify(address)
-        self.hass.async_create_task(self._async_save(), "Save ATC OTA inventory")
+        self._schedule_save()
 
         if (
             self.auto_probe
@@ -409,8 +421,10 @@ class AtcManager:
         if not force and now - self._last_metadata_attempt.get(address, 0.0) < METADATA_RETRY_SECONDS:
             return
         self._last_metadata_attempt[address] = now
-        task = self.hass.async_create_task(
-            self._async_auto_probe(address), f"ATC OTA metadata {address}"
+        task = self.entry.async_create_background_task(
+            self.hass,
+            self._async_auto_probe(address),
+            f"ATC OTA metadata {address}",
         )
         self._metadata_tasks[address] = task
         task.add_done_callback(lambda _task, addr=address: self._metadata_tasks.pop(addr, None))
@@ -422,6 +436,30 @@ class AtcManager:
         except Exception:
             # async_refresh_device already stores and logs the concrete failure.
             return
+
+    def _schedule_save(self) -> None:
+        """Coalesce high-rate BLE inventory updates into one background save."""
+        if self._save_task is not None and not self._save_task.done():
+            return
+        task = self.entry.async_create_background_task(
+            self.hass,
+            self._async_delayed_save(),
+            "Save ATC OTA inventory",
+        )
+        self._save_task = task
+        task.add_done_callback(self._clear_save_task)
+
+    @callback
+    def _clear_save_task(self, task: asyncio.Task) -> None:
+        if self._save_task is task:
+            self._save_task = None
+
+    async def _async_delayed_save(self) -> None:
+        # Advertisements can arrive in bursts during startup and scanner replay.
+        # One short debounce prevents dozens of writes to .storage for the same
+        # effective inventory state.
+        await asyncio.sleep(1.5)
+        await self._async_save()
 
     async def _async_save(self) -> None:
         await self._store.async_save(
@@ -914,4 +952,8 @@ class AtcManager:
             except Exception:
                 pass
 
-        self.hass.async_create_task(_refresh_after_reboot(), f"ATC OTA post-update {address}")
+        self.entry.async_create_background_task(
+            self.hass,
+            _refresh_after_reboot(),
+            f"ATC OTA post-update {address}",
+        )
