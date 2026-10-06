@@ -103,6 +103,7 @@ class DeviceState:
     latest_filename: str | None = None
     battery: int | None = None
     battery_last_seen: float | None = None
+    battery_source: str | None = None
     rssi: int | None = None
     strongest_proxy: str | None = None
     last_seen: float | None = None
@@ -216,6 +217,7 @@ class AtcManager:
                 # prevents a bogus value persisted by the v0.2.6 parser from being
                 # trusted immediately after upgrading to v0.2.7.
                 state.battery_last_seen = None
+                state.battery_source = "cache" if state.battery is not None else None
                 self.devices[address.upper()] = state
             except (TypeError, ValueError):
                 _LOGGER.warning("Ignoring invalid stored ATC OTA device %s", address)
@@ -460,6 +462,7 @@ class AtcManager:
         ):
             state.battery = battery
             state.battery_last_seen = reported_ts
+            state.battery_source = "home_assistant_bthome"
 
     def _parse_bthome_library(
         self,
@@ -707,6 +710,7 @@ class AtcManager:
             if battery is not None:
                 state.battery = battery
                 state.battery_last_seen = time.time()
+                state.battery_source = "bthome_advertisement"
             if firmware:
                 state.current_version = firmware
 
@@ -980,6 +984,7 @@ class AtcManager:
                 if battery is not None:
                     state.battery = battery
                     state.battery_last_seen = time.time()
+                    state.battery_source = "gatt"
 
                 revisions = [sw, fw]
                 current = next(
