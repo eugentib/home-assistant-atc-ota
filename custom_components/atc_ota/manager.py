@@ -114,6 +114,11 @@ class DeviceState:
     gatt_active_connections: bool | None = None
     gatt_feature_flags: int | None = None
     ota_readiness: str = "unknown"
+    last_ota_proxy: str | None = None
+    last_ota_rssi: int | None = None
+    last_ota_result: str | None = None
+    last_ota_at: float | None = None
+    last_ota_detail: str | None = None
     ota_readiness_reason: str | None = None
     last_metadata_success: float | None = None
     last_metadata_error: str | None = None
@@ -152,6 +157,11 @@ class DeviceState:
             "firmware_source",
             "firmware_cache_file",
             "firmware_sha256",
+            "last_ota_proxy",
+            "last_ota_rssi",
+            "last_ota_result",
+            "last_ota_at",
+            "last_ota_detail",
             "ha_name",
             "ha_area",
             "ha_area_id",
@@ -699,6 +709,39 @@ class AtcManager:
             _LOGGER.debug("Unable to get reachability diagnostics for %s: %s", address, exc)
             return None
 
+    def _actual_connected_route(
+        self, client, address: str
+    ) -> tuple[str | None, int | None]:
+        """Best-effort route actually selected by Home Assistant for this link.
+
+        Home Assistant's wrapped Bleak backend records the scanner only after a
+        successful connection. These are intentionally treated as optional
+        implementation details: failure to inspect them must never affect OTA.
+        """
+        try:
+            ha_backend = getattr(client, "_backend", None)
+            scanner = getattr(ha_backend, "_connected_scanner", None)
+            if scanner is None:
+                return None, None
+            proxy = str(
+                getattr(scanner, "name", None)
+                or getattr(scanner, "source", None)
+                or "unknown"
+            )
+            rssi: int | None = None
+            get_adv = getattr(scanner, "get_discovered_device_advertisement_data", None)
+            if callable(get_adv):
+                device_adv = get_adv(address)
+                if device_adv is not None:
+                    advertisement = device_adv[1]
+                    value = getattr(advertisement, "rssi", None)
+                    if value is not None:
+                        rssi = int(value)
+            return proxy, rssi
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.debug("Unable to inspect actual BLE route for %s: %s", address, exc)
+            return None, None
+
     async def _establish_client(self, address: str, name: str):
         """Connect through Home Assistant's native Bluetooth route selection.
 
@@ -944,6 +987,11 @@ class AtcManager:
         state.firmware_source = None
         state.firmware_cache_file = None
         state.firmware_sha256 = None
+        state.last_ota_proxy = None
+        state.last_ota_rssi = None
+        state.last_ota_result = "running"
+        state.last_ota_at = None
+        state.last_ota_detail = "OTA started"
         self._notify(address)
 
         succeeded = False
@@ -1046,6 +1094,9 @@ class AtcManager:
         except Exception as exc:  # noqa: BLE001
             if not (state.ota_message or "").startswith("OTA failed:"):
                 state.ota_message = f"Update failed: {type(exc).__name__}: {exc}"
+            state.last_ota_result = "failed"
+            state.last_ota_at = time.time()
+            state.last_ota_detail = state.ota_message
             _LOGGER.warning("Firmware update failed for %s: %s", address, state.ota_message)
             if isinstance(exc, HomeAssistantError):
                 raise
@@ -1056,6 +1107,11 @@ class AtcManager:
             if succeeded:
                 state.ota_progress = 100
                 state.ota_message = "OTA completed"
+                state.last_ota_result = "success"
+                state.last_ota_at = time.time()
+                state.last_ota_detail = (
+                    f"Firmware {state.current_version or 'unknown'} verified after OTA"
+                )
             self._notify(address)
             await self._async_save()
 
@@ -1143,6 +1199,22 @@ class AtcManager:
         client = None
         try:
             client = await self._establish_client(address, state.name or address)
+            (
+                state.last_ota_proxy,
+                state.last_ota_rssi,
+            ) = self._actual_connected_route(client, address)
+            state.last_ota_detail = (
+                f"Connected through {state.last_ota_proxy}"
+                + (
+                    f" at {state.last_ota_rssi} dBm"
+                    if state.last_ota_rssi is not None
+                    else ""
+                )
+                if state.last_ota_proxy
+                else "Connected; exact Home Assistant route unavailable"
+            )
+            self._notify(address)
+
             characteristic = client.services.get_characteristic(OTA_CHAR_UUID)
             if characteristic is None:
                 raise HomeAssistantError("Compatible Telink OTA characteristic was not found")
