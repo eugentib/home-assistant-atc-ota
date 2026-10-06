@@ -1,10 +1,36 @@
-# ATC OTA for Home Assistant — v0.2.13
+# ATC OTA for Home Assistant — v0.3.0
 
 ## Compatibility notes
 
 Home Assistant provides `bleak-retry-connector` through its built-in Bluetooth integration, so ATC OTA does not pin or install a second copy. Config-flow imports remain lightweight and Bluetooth runtime code is loaded only after the config entry is set up.
 
 A Home Assistant custom integration for pvvx/ATC Telink thermometers such as **LYWSD03MMC**.
+
+## v0.3.0 native device management and OTA readiness
+
+v0.3.0 turns the v0.2.x OTA engine into a clearer Home Assistant device-management experience while keeping Home Assistant in full control of Bluetooth routing.
+
+- separates passive **Broadcast RSSI / proxy** from the preferred **GATT RSSI / proxy** used for active connections and OTA;
+- exposes Home Assistant connectable-route diagnostics: route age, recent connection failures and BLE connection slots;
+- adds an **OTA readiness** diagnostic entity with stable states such as `ready`, `weak_signal`, `poor_signal`, `no_gatt_route`, `gatt_busy`, `low_battery` and `unstable_route`;
+- the Firmware update entity now summarizes OTA readiness and the GATT route instead of showing only the strongest broadcast RSSI;
+- marks all ATC OTA entities as push-based (`should_poll = false`);
+- stops persisting volatile BLE observations such as RSSI, scanner route, last-seen timestamps and runtime readiness;
+- only schedules an inventory storage write when durable inventory data actually changes;
+- adds pure readiness tests plus architecture regression coverage;
+- retains the useful v0.1.x distinction between passive-only reception and active-GATT capability without reconnecting directly to ESPHome or handling proxy API keys itself.
+
+Typical device view:
+
+```text
+Firmware        5.8 → 5.9
+Battery         67%
+Broadcast RSSI  -52 dBm       tesla-ble
+GATT RSSI       -82 dBm       btproxy2
+OTA readiness   ready
+```
+
+A passive scanner may therefore be the strongest broadcast source while a different Home Assistant Bluetooth Proxy is the actual GATT/OTA route.
 
 ## v0.2.13 verify OTA before reporting success
 
