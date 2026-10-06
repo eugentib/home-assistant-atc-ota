@@ -1,10 +1,17 @@
-# ATC OTA for Home Assistant — v0.2.11
+# ATC OTA for Home Assistant — v0.2.12
 
 ## Compatibility notes
 
 Home Assistant provides `bleak-retry-connector` through its built-in Bluetooth integration, so ATC OTA does not pin or install a second copy. Config-flow imports remain lightweight and Bluetooth runtime code is loaded only after the config entry is set up.
 
 A Home Assistant custom integration for pvvx/ATC Telink thermometers such as **LYWSD03MMC**.
+
+## v0.2.12 faster Home Assistant startup
+
+- moves catalog refresh, automatic metadata probes and post-OTA refresh work to Home Assistant background tasks so they do not hold the startup task barrier;
+- replaces one inventory storage write per BLE advertisement with a 1.5-second debounced background save;
+- keeps explicit user-triggered metadata/OTA persistence awaited where durability matters;
+- reduces Bluetooth/GATT startup work from affecting the "Wrapping up startup" phase.
 
 ## v0.2.11 preserve Home Assistant BLE routing history
 
