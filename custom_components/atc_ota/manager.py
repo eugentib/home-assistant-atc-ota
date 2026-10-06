@@ -47,7 +47,7 @@ from .const import (
     UUID_SERIAL_NUMBER,
     UUID_SOFTWARE_REV,
 )
-from .firmware import download_firmware, fetch_catalog, resolve_stable_firmware
+from .firmware import fetch_catalog, get_cached_firmware, resolve_stable_firmware
 from .protocol import BLOCK_SIZE, make_block, make_finish, pad_firmware, validate_firmware
 
 _LOGGER = logging.getLogger(__name__)
@@ -104,6 +104,9 @@ class DeviceState:
     ota_in_progress: bool = False
     ota_progress: int | None = None
     ota_message: str | None = None
+    firmware_source: str | None = None
+    firmware_cache_file: str | None = None
+    firmware_sha256: str | None = None
     ha_name: str | None = None
     ha_area: str | None = None
     ha_area_id: str | None = None
@@ -131,6 +134,7 @@ class AtcManager:
         self._store: Store[dict[str, Any]] = Store(hass, STORAGE_VERSION, STORAGE_KEY)
         self._gatt_lock = asyncio.Lock()
         self._ota_lock = asyncio.Lock()
+        self._installing_addresses: set[str] = set()
         self._metadata_tasks: dict[str, asyncio.Task] = {}
         self._last_metadata_attempt: dict[str, float] = {}
         self._unsubs: list[Any] = []
@@ -666,42 +670,42 @@ class AtcManager:
         """Install latest stable pvvx firmware using HA-managed Bluetooth routing."""
         address = address.upper()
         state = self.devices[address]
-        async with self._ota_lock:
-            if state.ota_in_progress:
-                raise HomeAssistantError("An OTA update is already in progress for this device")
 
-            # OTA safety gate: require a recent battery value before any flash starts.
-            # pvvx can advertise the battery in a separate BTHome packet, so an old
-            # cached value (or no value at all) is not enough.  Request an active
-            # scan and require the battery timestamp to be recent afterwards.
-            now = time.time()
-            battery_fresh = (
-                state.battery is not None
-                and state.battery_last_seen is not None
-                and now - state.battery_last_seen <= OTA_BATTERY_MAX_AGE_SECONDS
-            )
-            if not battery_fresh:
-                try:
-                    await self.async_request_scan(float(OTA_BATTERY_SCAN_SECONDS))
-                except Exception as exc:  # noqa: BLE001
-                    _LOGGER.debug("Pre-OTA battery scan failed: %s", exc)
+        # Guard the complete install operation, including battery checks, catalog
+        # refresh and firmware preparation. Home Assistant's update entity can then
+        # report a consistent in-progress state from the first await until cleanup.
+        if address in self._installing_addresses:
+            raise HomeAssistantError("An OTA update is already in progress for this device")
 
-            now = time.time()
-            battery_fresh = (
-                state.battery is not None
-                and state.battery_last_seen is not None
-                and now - state.battery_last_seen <= OTA_BATTERY_MAX_AGE_SECONDS
-            )
+        self._installing_addresses.add(address)
+        state.ota_in_progress = True
+        state.ota_progress = 0
+        state.ota_message = "Waiting for OTA slot"
+        state.firmware_source = None
+        state.firmware_cache_file = None
+        state.firmware_sha256 = None
+        self._notify(address)
 
-            # A pvvx device can rotate BTHome measurements between advertisements.
-            # If the active scan did not happen to catch the battery object, use the
-            # standard Battery Level GATT characteristic as a second authoritative
-            # source before refusing the OTA operation.
-            if not battery_fresh:
-                try:
-                    await self.async_refresh_device(address)
-                except Exception as exc:  # noqa: BLE001
-                    _LOGGER.debug("Pre-OTA GATT battery refresh failed: %s", exc)
+        succeeded = False
+        try:
+            async with self._ota_lock:
+                state.ota_progress = 1
+                state.ota_message = "Checking battery"
+                self._notify(address)
+
+                now = time.time()
+                battery_fresh = (
+                    state.battery is not None
+                    and state.battery_last_seen is not None
+                    and now - state.battery_last_seen <= OTA_BATTERY_MAX_AGE_SECONDS
+                )
+                if not battery_fresh:
+                    state.ota_message = "Scanning for a fresh battery reading"
+                    self._notify(address)
+                    try:
+                        await self.async_request_scan(float(OTA_BATTERY_SCAN_SECONDS))
+                    except Exception as exc:  # noqa: BLE001
+                        _LOGGER.debug("Pre-OTA battery scan failed: %s", exc)
 
                 now = time.time()
                 battery_fresh = (
@@ -710,34 +714,85 @@ class AtcManager:
                     and now - state.battery_last_seen <= OTA_BATTERY_MAX_AGE_SECONDS
                 )
 
-            if not battery_fresh:
-                raise HomeAssistantError(
-                    "OTA refused because a recent battery level could not be obtained "
-                    "from BTHome or the Battery Level GATT characteristic."
+                if not battery_fresh:
+                    state.ota_message = "Reading battery over GATT"
+                    self._notify(address)
+                    try:
+                        await self.async_refresh_device(address)
+                    except Exception as exc:  # noqa: BLE001
+                        _LOGGER.debug("Pre-OTA GATT battery refresh failed: %s", exc)
+
+                    now = time.time()
+                    battery_fresh = (
+                        state.battery is not None
+                        and state.battery_last_seen is not None
+                        and now - state.battery_last_seen <= OTA_BATTERY_MAX_AGE_SECONDS
+                    )
+
+                if not battery_fresh:
+                    raise HomeAssistantError(
+                        "OTA refused because a recent battery level could not be obtained "
+                        "from BTHome or the Battery Level GATT characteristic."
+                    )
+
+                if state.battery <= self.low_battery_threshold:
+                    raise HomeAssistantError(
+                        f"OTA refused: battery is {state.battery}% and the configured minimum is "
+                        f"{self.low_battery_threshold}%. Change the ATC OTA option only if you "
+                        "intentionally want to accept the risk."
+                    )
+
+                if not state.model or not state.hardware_revision or not state.current_version:
+                    state.ota_message = "Refreshing device metadata"
+                    self._notify(address)
+                    await self.async_refresh_device(address)
+
+                if self.catalog is None:
+                    state.ota_message = "Refreshing firmware catalog"
+                    self._notify(address)
+                    await self.async_refresh_catalog()
+                if self.catalog is None:
+                    raise HomeAssistantError("The pvvx firmware catalog is not available")
+
+                choice = resolve_stable_firmware(
+                    self.catalog,
+                    model=state.model,
+                    hardware_revision=state.hardware_revision,
                 )
 
-            if state.battery <= self.low_battery_threshold:
-                raise HomeAssistantError(
-                    f"OTA refused: battery is {state.battery}% and the configured minimum is "
-                    f"{self.low_battery_threshold}%. Change the ATC OTA option only if you "
-                    "intentionally want to accept the risk."
-                )
+                state.ota_progress = 2
+                state.ota_message = f"Preparing firmware {choice.version}"
+                self._notify(address)
 
-            if not state.model or not state.hardware_revision or not state.current_version:
-                await self.async_refresh_device(address)
+                payload = await get_cached_firmware(self.hass, choice)
+                state.firmware_source = payload.source
+                state.firmware_cache_file = payload.cache_file
+                state.firmware_sha256 = payload.sha256
+                state.ota_progress = 3
+                if payload.source == "cache":
+                    state.ota_message = f"Using cached firmware {choice.filename}"
+                else:
+                    state.ota_message = f"Downloaded and cached firmware {choice.filename}"
+                self._notify(address)
 
-            if self.catalog is None:
-                await self.async_refresh_catalog()
-            if self.catalog is None:
-                raise HomeAssistantError("The pvvx firmware catalog is not available")
+                await self._flash(address, payload.data, choice.version)
+                succeeded = True
 
-            choice = resolve_stable_firmware(
-                self.catalog,
-                model=state.model,
-                hardware_revision=state.hardware_revision,
-            )
-            firmware = await download_firmware(self.hass, choice)
-            await self._flash(address, firmware, choice.version)
+        except Exception as exc:  # noqa: BLE001
+            if not (state.ota_message or "").startswith("OTA failed:"):
+                state.ota_message = f"Update failed: {type(exc).__name__}: {exc}"
+            _LOGGER.warning("Firmware update failed for %s: %s", address, state.ota_message)
+            if isinstance(exc, HomeAssistantError):
+                raise
+            raise HomeAssistantError(state.ota_message) from exc
+        finally:
+            self._installing_addresses.discard(address)
+            state.ota_in_progress = False
+            if succeeded:
+                state.ota_progress = 100
+                state.ota_message = "OTA completed"
+            self._notify(address)
+            await self._async_save()
 
     async def _flash(self, address: str, firmware: bytes, target_version: str) -> None:
         """Serialize OTA against metadata GATT reads."""
@@ -752,8 +807,7 @@ class AtcManager:
             raise HomeAssistantError("Firmware image has too many Telink OTA blocks")
 
         state = self.devices[address]
-        state.ota_in_progress = True
-        state.ota_progress = 1
+        state.ota_progress = 4
         state.ota_message = "Preparing OTA"
         self._notify(address)
 
@@ -764,7 +818,7 @@ class AtcManager:
             if characteristic is None:
                 raise HomeAssistantError("Compatible Telink OTA characteristic was not found")
 
-            state.ota_progress = 3
+            state.ota_progress = 5
             state.ota_message = "Starting Telink OTA"
             self._notify(address)
 
@@ -807,12 +861,7 @@ class AtcManager:
                 bluetooth.async_clear_advertisement_history(self.hass, address)
             except Exception:  # noqa: BLE001
                 pass
-            state.ota_in_progress = False
-            if state.ota_progress == 99:
-                state.ota_progress = 100
-                state.ota_message = "OTA completed"
             self._notify(address)
-            await self._async_save()
 
         # Let the thermometer reboot, then refresh metadata through HA later.
         async def _refresh_after_reboot() -> None:
