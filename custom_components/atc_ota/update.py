@@ -122,7 +122,11 @@ class AtcFirmwareUpdate(AtcOtaEntity, UpdateEntity):
             f"{state.gatt_failures if state.gatt_failures is not None else 'unknown'}\n"
             f"- **BLE slots:** "
             f"{state.gatt_free_slots if state.gatt_free_slots is not None else 'unknown'} free / "
-            f"{state.gatt_slots if state.gatt_slots is not None else 'unknown'} total\n\n"
+            f"{state.gatt_slots if state.gatt_slots is not None else 'unknown'} total\n"
+            f"- **Last OTA route actually used:** "
+            f"{state.last_ota_proxy or 'unknown'}"
+            f"{f' / {state.last_ota_rssi} dBm' if state.last_ota_rssi is not None else ''}\n"
+            f"- **Last OTA result:** {state.last_ota_result or 'none'}\n\n"
             "Firmware is obtained from the official pvvx/ATC_MiThermometer repository, "
             "validated and cached persistently in Home Assistant. Transfer goes through "
             "Home Assistant's shared Bluetooth stack."
@@ -165,6 +169,11 @@ class AtcFirmwareUpdate(AtcOtaEntity, UpdateEntity):
             "gatt_feature_flags": state.gatt_feature_flags,
             "ota_readiness": state.ota_readiness,
             "ota_readiness_reason": state.ota_readiness_reason,
+            "last_ota_proxy": state.last_ota_proxy,
+            "last_ota_rssi": state.last_ota_rssi,
+            "last_ota_result": state.last_ota_result,
+            "last_ota_at": state.last_ota_at,
+            "last_ota_detail": state.last_ota_detail,
             "ota_message": state.ota_message,
             "ota_progress": state.ota_progress,
             "firmware_source": state.firmware_source,
