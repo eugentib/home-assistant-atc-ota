@@ -960,6 +960,9 @@ class AtcManager:
                 state.last_metadata_success = time.time()
                 state.last_metadata_error = None
                 self._apply_latest(state)
+                # A GATT metadata refresh may change the battery independently
+                # of advertisement routing. Re-evaluate preflight immediately.
+                self._update_ota_readiness(state)
             except Exception as exc:  # noqa: BLE001
                 state.last_metadata_error = f"{type(exc).__name__}: {exc}"
                 _LOGGER.warning("Metadata read failed for %s: %s", address, state.last_metadata_error)
@@ -1087,11 +1090,8 @@ class AtcManager:
                 state.ota_message = "Checking battery"
                 self._notify(address)
 
-                now = time.time()
                 battery_fresh = (
-                    state.battery is not None
-                    and state.battery_last_seen is not None
-                    and now - state.battery_last_seen <= OTA_BATTERY_MAX_AGE_SECONDS
+                    state.battery is not None and self.battery_is_fresh(state)
                 )
                 if not battery_fresh:
                     state.ota_message = "Scanning for a fresh battery reading"
@@ -1101,11 +1101,8 @@ class AtcManager:
                     except Exception as exc:  # noqa: BLE001
                         _LOGGER.debug("Pre-OTA battery scan failed: %s", exc)
 
-                now = time.time()
                 battery_fresh = (
-                    state.battery is not None
-                    and state.battery_last_seen is not None
-                    and now - state.battery_last_seen <= OTA_BATTERY_MAX_AGE_SECONDS
+                    state.battery is not None and self.battery_is_fresh(state)
                 )
 
                 if not battery_fresh:
@@ -1116,11 +1113,8 @@ class AtcManager:
                     except Exception as exc:  # noqa: BLE001
                         _LOGGER.debug("Pre-OTA GATT battery refresh failed: %s", exc)
 
-                    now = time.time()
                     battery_fresh = (
-                        state.battery is not None
-                        and state.battery_last_seen is not None
-                        and now - state.battery_last_seen <= OTA_BATTERY_MAX_AGE_SECONDS
+                        state.battery is not None and self.battery_is_fresh(state)
                     )
 
                 if not battery_fresh:
