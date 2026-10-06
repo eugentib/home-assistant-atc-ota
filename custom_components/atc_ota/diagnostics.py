@@ -59,6 +59,7 @@ async def async_get_config_entry_diagnostics(hass, entry):
         data["ha_reachability"] = manager._reachability_diagnostics(address)
         devices[address] = data
     return {
+        "manager_instance": manager.instance_id,
         "options": dict(entry.options),
         "catalog_loaded": manager.catalog is not None,
         "devices": devices,
