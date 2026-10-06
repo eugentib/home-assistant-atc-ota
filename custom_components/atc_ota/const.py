@@ -4,7 +4,7 @@ from __future__ import annotations
 
 DOMAIN = "atc_ota"
 NAME = "ATC OTA"
-VERSION = "0.3.7"
+VERSION = "0.3.8"
 
 BTHOME_UUID = "0000fcd2-0000-1000-8000-00805f9b34fb"
 ENV_SENSING_UUID = "0000181a-0000-1000-8000-00805f9b34fb"
@@ -45,6 +45,7 @@ OTA_WRITE_RETRY_ATTEMPTS = 5
 OTA_WRITE_RETRY_BASE_SECONDS = 0.10
 OTA_BLOCK_PACING_SECONDS = 0.012
 OTA_START_COMMAND_GAP_SECONDS = 0.15
+OTA_START_RECONNECT_ATTEMPTS = 2
 
 PVVX_CATALOG_URL = "https://raw.githubusercontent.com/pvvx/ATC_MiThermometer/master/firmware.json"
 PVVX_RAW_BASE_URL = "https://raw.githubusercontent.com/pvvx/ATC_MiThermometer/master/"
