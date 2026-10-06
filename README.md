@@ -1,10 +1,18 @@
-# ATC OTA for Home Assistant — v0.2.6
+# ATC OTA for Home Assistant — v0.2.7
 
 ## Compatibility notes
 
 Home Assistant provides `bleak-retry-connector` through its built-in Bluetooth integration, so ATC OTA does not pin or install a second copy. Config-flow imports remain lightweight and Bluetooth runtime code is loaded only after the config entry is set up.
 
 A Home Assistant custom integration for pvvx/ATC Telink thermometers such as **LYWSD03MMC**.
+
+## v0.2.7 battery/OTA fix
+
+- fixes a BTHome parser bug where `Power = On` (`0x10 0x01`) followed by `Opening = Open` (`0x11 0x01`) could be misread as a fake **17%** battery value;
+- removes the unsafe raw-byte battery fallback and parses battery only as a real BTHome `0x01` object;
+- understands the standard BTHome binary-object range used by pvvx;
+- if a pre-OTA active scan does not obtain a fresh battery advertisement, ATC OTA tries the standard Battery Level GATT characteristic before refusing the update;
+- a battery value restored from persistent storage is no longer trusted for OTA until reconfirmed after restart.
 
 ## Why v0.2.6 is different
 
@@ -86,7 +94,7 @@ The update entity reports installed/latest versions, OTA progress, battery, stro
 
 ## Battery safety
 
-The default OTA battery minimum is **30%** and can be changed under the integration's Options. v0.2.6 requires a recent battery reading before flashing and refuses OTA when the value is unknown/stale or at/below the threshold. There is no double-click bypass; lowering the configured threshold is the explicit override.
+The default OTA battery minimum is **30%** and can be changed under the integration's Options. v0.2.7 requires a recent battery reading before flashing and refuses OTA when the value is unknown/stale or at/below the threshold. There is no double-click bypass; lowering the configured threshold is the explicit override.
 
 ## Bluetooth architecture
 
