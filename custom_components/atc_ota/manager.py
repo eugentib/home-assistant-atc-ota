@@ -399,7 +399,7 @@ class AtcManager:
             if parsed.battery is not None:
                 state.battery = parsed.battery
                 state.battery_last_seen = time.time()
-            if parsed.firmware_version and not state.current_version:
+            if parsed.firmware_version:
                 state.current_version = normalize_version(parsed.firmware_version)
 
         if is_new:
@@ -657,10 +657,88 @@ class AtcManager:
         self._last_metadata_attempt[address.upper()] = 0.0
         await self.async_refresh_device(address)
 
+    @staticmethod
+    def _versions_match(actual: str | None, expected: str | None) -> bool:
+        """Compare normalized dotted versions while tolerating trailing zeroes."""
+        actual_tuple = version_tuple(actual)
+        expected_tuple = version_tuple(expected)
+        if actual_tuple is None or expected_tuple is None:
+            return normalize_version(actual) == normalize_version(expected)
+        width = max(len(actual_tuple), len(expected_tuple))
+        return (
+            actual_tuple + (0,) * (width - len(actual_tuple))
+            == expected_tuple + (0,) * (width - len(expected_tuple))
+        )
+
+    async def _verify_firmware_after_ota(
+        self,
+        address: str,
+        target_version: str,
+        previous_version: str | None,
+    ) -> None:
+        """Confirm the device actually booted the requested firmware."""
+        state = self.devices[address]
+        state.ota_progress = 99
+        state.ota_message = f"Verifying firmware {target_version} after reboot"
+        self._notify(address)
+
+        # Give the thermometer time to reboot and resume advertisements.
+        await asyncio.sleep(6.0)
+
+        # First allow BTHome advertisements to confirm the new version without
+        # consuming a GATT connection. Explicit BTHome firmware objects update
+        # state.current_version in _async_bluetooth_event().
+        try:
+            await self.async_request_scan(4.0)
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.debug("Post-OTA verification scan failed for %s: %s", address, exc)
+
+        if self._versions_match(state.current_version, target_version):
+            state.ota_message = f"Verified firmware {target_version} via advertisement"
+            self._notify(address)
+            return
+
+        last_error: Exception | None = None
+        for attempt in range(1, 4):
+            state.ota_message = (
+                f"Verifying firmware {target_version} over GATT "
+                f"(attempt {attempt}/3)"
+            )
+            self._notify(address)
+            try:
+                await self.async_refresh_device(address)
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                _LOGGER.debug(
+                    "Post-OTA verification attempt %s failed for %s: %s",
+                    attempt,
+                    address,
+                    exc,
+                )
+            else:
+                if self._versions_match(state.current_version, target_version):
+                    state.ota_message = f"Verified firmware {target_version} over GATT"
+                    self._notify(address)
+                    return
+                last_error = HomeAssistantError(
+                    f"Device reports firmware {state.current_version or 'unknown'}"
+                )
+
+            if attempt < 3:
+                await asyncio.sleep(4.0)
+
+        reported = state.current_version or previous_version or "unknown"
+        detail = f": {type(last_error).__name__}: {last_error}" if last_error else ""
+        raise HomeAssistantError(
+            f"OTA transfer finished but firmware verification failed. "
+            f"Device reports {reported}; expected {target_version}{detail}"
+        )
+
     async def async_install_latest(self, address: str) -> None:
         """Install latest stable pvvx firmware using HA-managed Bluetooth routing."""
         address = address.upper()
         state = self.devices[address]
+        previous_version = state.current_version
 
         # Guard the complete install operation, including battery checks, catalog
         # refresh and firmware preparation. Home Assistant's update entity can then
@@ -767,6 +845,11 @@ class AtcManager:
                 self._notify(address)
 
                 await self._flash(address, payload.data, choice.version)
+                await self._verify_firmware_after_ota(
+                    address,
+                    choice.version,
+                    previous_version,
+                )
                 succeeded = True
 
         except Exception as exc:  # noqa: BLE001
@@ -930,7 +1013,6 @@ class AtcManager:
             state.ota_message = "Final command sent; waiting for reboot"
             self._notify(address)
             await asyncio.sleep(0.5)
-            state.current_version = target_version
             state.last_metadata_error = None
         except Exception as exc:  # noqa: BLE001
             state.ota_message = f"OTA failed: {type(exc).__name__}: {exc}"
@@ -944,16 +1026,3 @@ class AtcManager:
                     _LOGGER.warning("Disconnect failed after OTA for %s: %s", address, exc)
             self._notify(address)
 
-        # Let the thermometer reboot, then refresh metadata through HA later.
-        async def _refresh_after_reboot() -> None:
-            await asyncio.sleep(10)
-            try:
-                await self.async_refresh_device(address)
-            except Exception:
-                pass
-
-        self.entry.async_create_background_task(
-            self.hass,
-            _refresh_after_reboot(),
-            f"ATC OTA post-update {address}",
-        )
