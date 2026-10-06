@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass
 from datetime import timedelta
 import logging
 import re
@@ -53,6 +53,7 @@ from .const import (
 )
 from .firmware import fetch_catalog, get_cached_firmware, resolve_stable_firmware
 from .protocol import BLOCK_SIZE, make_block, make_finish, pad_firmware, validate_firmware
+from .readiness import evaluate_ota_readiness
 
 _LOGGER = logging.getLogger(__name__)
 _VERSION_RE = re.compile(r"^V?(\d+)(?:\.(\d+)){1,2}(?:[-+._a-zA-Z0-9]*)?$")
@@ -416,40 +417,17 @@ class AtcManager:
 
     def _update_ota_readiness(self, state: DeviceState) -> None:
         """Derive a user-facing OTA readiness state from live preflight data."""
-        if state.battery is None or state.battery_last_seen is None:
-            state.ota_readiness = "waiting_for_battery"
-            state.ota_readiness_reason = "Waiting for a fresh battery advertisement"
-            return
-        if state.battery <= self.low_battery_threshold:
-            state.ota_readiness = "low_battery"
-            state.ota_readiness_reason = (
-                f"Battery {state.battery}% is at/below the {self.low_battery_threshold}% OTA minimum"
-            )
-            return
-        if state.gatt_proxy is None:
-            state.ota_readiness = "no_gatt_route"
-            state.ota_readiness_reason = "No connectable Home Assistant Bluetooth route is currently available"
-            return
-        if state.gatt_free_slots == 0:
-            state.ota_readiness = "gatt_busy"
-            state.ota_readiness_reason = f"{state.gatt_proxy} has no free BLE connection slots"
-            return
-        if state.gatt_rssi is not None and state.gatt_rssi <= -90:
-            state.ota_readiness = "poor_signal"
-            state.ota_readiness_reason = f"GATT route signal is very weak ({state.gatt_rssi} dBm)"
-            return
-        if state.gatt_rssi is not None and state.gatt_rssi <= -85:
-            state.ota_readiness = "weak_signal"
-            state.ota_readiness_reason = f"GATT route signal is weak ({state.gatt_rssi} dBm)"
-            return
-        if state.gatt_failures is not None and state.gatt_failures >= 2:
-            state.ota_readiness = "unstable_route"
-            state.ota_readiness_reason = (
-                f"{state.gatt_proxy} has {state.gatt_failures} recent connection failures"
-            )
-            return
-        state.ota_readiness = "ready"
-        state.ota_readiness_reason = "Battery and connectable Bluetooth route look suitable for OTA"
+        result = evaluate_ota_readiness(
+            battery=state.battery,
+            battery_fresh=state.battery_last_seen is not None,
+            low_battery_threshold=self.low_battery_threshold,
+            gatt_proxy=state.gatt_proxy,
+            gatt_rssi=state.gatt_rssi,
+            gatt_failures=state.gatt_failures,
+            gatt_free_slots=state.gatt_free_slots,
+        )
+        state.ota_readiness = result.state
+        state.ota_readiness_reason = result.reason
 
     def _refresh_ble_routes(self, state: DeviceState) -> None:
         """Refresh broadcast and preferred connectable-route diagnostics from HA."""
