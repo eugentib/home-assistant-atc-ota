@@ -8,6 +8,7 @@ from datetime import timedelta
 import logging
 import re
 import time
+import uuid
 from typing import Any
 
 from bleak_retry_connector import BleakClientWithServiceCache, establish_connection
@@ -193,6 +194,9 @@ class AtcManager:
         self._gatt_lock = asyncio.Lock()
         self._ota_lock = asyncio.Lock()
         self._installing_addresses: set[str] = set()
+        self._install_tasks: dict[str, asyncio.Task] = {}
+        self._shutting_down = False
+        self.instance_id = uuid.uuid4().hex[:8]
         self._metadata_tasks: dict[str, asyncio.Task] = {}
         self._route_refresh_tasks: dict[str, asyncio.Task] = {}
         self._bthome_parsers: dict[str, BTHomeBluetoothDeviceData] = {}
@@ -270,6 +274,11 @@ class AtcManager:
 
     @callback
     def async_shutdown(self) -> None:
+        self._shutting_down = True
+        for task in tuple(self._install_tasks.values()):
+            if not task.done():
+                task.cancel()
+        self._install_tasks.clear()
         for unsub in self._unsubs:
             unsub()
         self._unsubs.clear()
@@ -1220,8 +1229,13 @@ class AtcManager:
     async def async_install_latest(self, address: str) -> None:
         """Install latest stable pvvx firmware using HA-managed Bluetooth routing."""
         address = address.upper()
+        if self._shutting_down:
+            raise HomeAssistantError("ATC OTA is shutting down; refusing a new update")
         state = self.devices[address]
         previous_version = state.current_version
+        install_task = asyncio.current_task()
+        if install_task is not None:
+            self._install_tasks[address] = install_task
 
         # Guard the complete install operation, including battery checks, catalog
         # refresh and firmware preparation. Home Assistant's update entity can then
@@ -1348,6 +1362,8 @@ class AtcManager:
             raise HomeAssistantError(state.ota_message) from exc
         finally:
             self._installing_addresses.discard(address)
+            if self._install_tasks.get(address) is install_task:
+                self._install_tasks.pop(address, None)
             state.ota_in_progress = False
             if succeeded:
                 state.ota_progress = 100
