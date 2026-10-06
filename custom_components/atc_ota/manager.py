@@ -38,6 +38,7 @@ from .const import (
     OTA_BATTERY_SCAN_SECONDS,
     OTA_BLOCK_PACING_SECONDS,
     OTA_START_COMMAND_GAP_SECONDS,
+    OTA_START_RECONNECT_ATTEMPTS,
     OTA_WRITE_RETRY_ATTEMPTS,
     OTA_WRITE_RETRY_BASE_SECONDS,
     METADATA_RETRY_SECONDS,
@@ -804,8 +805,12 @@ class AtcManager:
         implementation details: failure to inspect them must never affect OTA.
         """
         try:
-            ha_backend = getattr(client, "_backend", None)
-            scanner = getattr(ha_backend, "_connected_scanner", None)
+            # Current habluetooth keeps the selected scanner on the wrapped
+            # client itself. Keep the backend fallback for older HA versions.
+            scanner = getattr(client, "_connected_scanner", None)
+            if scanner is None:
+                ha_backend = getattr(client, "_backend", None)
+                scanner = getattr(ha_backend, "_connected_scanner", None)
             if scanner is None:
                 return None, None
             proxy = str(
@@ -1163,6 +1168,11 @@ class AtcManager:
                     state.ota_message = f"Downloaded and cached firmware {choice.filename}"
                 self._notify(address)
 
+                # Battery advertisements may update while firmware is prepared.
+                # Revalidate immediately before opening the OTA session.
+                self._assert_battery_safe_for_ota(
+                    state, context="final preflight"
+                )
                 await self._flash(address, payload.data, choice.version)
                 await self._verify_firmware_after_ota(
                     address,
@@ -1205,6 +1215,37 @@ class AtcManager:
             or "error 143" in text
             or "0x8f" in text
         )
+
+    @staticmethod
+    def _is_link_lost(exc: Exception) -> bool:
+        """Return True for connection loss before firmware data transfer."""
+        text = f"{type(exc).__name__}: {exc}".lower()
+        return any(
+            token in text
+            for token in (
+                "not connected",
+                "disconnected",
+                "connection lost",
+                "failed to connect",
+                "unable to connect",
+                "timeout waiting for connect",
+            )
+        )
+
+    def _assert_battery_safe_for_ota(
+        self, state: DeviceState, *, context: str
+    ) -> None:
+        """Hard guard battery freshness and threshold at a safety boundary."""
+        self._update_ota_readiness(state)
+        if state.battery is None or not self.battery_is_fresh(state):
+            raise HomeAssistantError(
+                f"OTA refused during {context}: a recent battery level is not available."
+            )
+        if state.battery < self.low_battery_threshold:
+            raise HomeAssistantError(
+                f"OTA refused during {context}: battery is {state.battery}% and the "
+                f"configured minimum is {self.low_battery_threshold}%."
+            )
 
     async def _ota_write(
         self,
@@ -1277,54 +1318,121 @@ class AtcManager:
         self._notify(address)
 
         client = None
+        characteristic = None
         try:
-            client = await self._establish_client(address, state.name or address)
-            (
-                state.last_ota_proxy,
-                state.last_ota_rssi,
-            ) = self._actual_connected_route(client, address)
-            state.last_ota_detail = (
-                f"Connected through {state.last_ota_proxy}"
-                + (
-                    f" at {state.last_ota_rssi} dBm"
-                    if state.last_ota_rssi is not None
-                    else ""
-                )
-                if state.last_ota_proxy
-                else "Connected; exact Home Assistant route unavailable"
-            )
-            self._notify(address)
+            # It is safe to restart the Telink handshake before any firmware
+            # block has been sent. This handles a proxy/link that connects and
+            # immediately drops before or during the two start commands.
+            for attempt in range(1, OTA_START_RECONNECT_ATTEMPTS + 1):
+                try:
+                    client = await self._establish_client(
+                        address, state.name or address
+                    )
+                    (
+                        state.last_ota_proxy,
+                        state.last_ota_rssi,
+                    ) = self._actual_connected_route(client, address)
+                    state.last_ota_detail = (
+                        f"Connected through {state.last_ota_proxy}"
+                        + (
+                            f" at {state.last_ota_rssi} dBm"
+                            if state.last_ota_rssi is not None
+                            else ""
+                        )
+                        if state.last_ota_proxy
+                        else "Connected; exact Home Assistant route unavailable"
+                    )
+                    self._notify(address)
 
-            characteristic = client.services.get_characteristic(OTA_CHAR_UUID)
-            if characteristic is None:
-                raise HomeAssistantError("Compatible Telink OTA characteristic was not found")
+                    characteristic = client.services.get_characteristic(OTA_CHAR_UUID)
+                    if characteristic is None:
+                        raise HomeAssistantError(
+                            "Compatible Telink OTA characteristic was not found"
+                        )
 
-            state.ota_progress = 5
-            state.ota_message = "Starting Telink OTA"
-            self._notify(address)
+                    # A fresh Battery advertisement can arrive while connection
+                    # setup is in progress. Never send even the first OTA command
+                    # if it has moved below the configured threshold.
+                    self._assert_battery_safe_for_ota(
+                        state, context="OTA start"
+                    )
 
-            await asyncio.sleep(0.50)
-            state.ota_message = "Starting Telink OTA (phase 1/2)"
-            self._notify(address)
-            await self._ota_write(
-                state,
-                client,
-                characteristic,
-                b"\x00\xFF",
-                label="OTA start phase 1",
-            )
-            await asyncio.sleep(OTA_START_COMMAND_GAP_SECONDS)
+                    state.ota_progress = 5
+                    state.ota_message = (
+                        "Starting Telink OTA"
+                        if attempt == 1
+                        else (
+                            "Starting Telink OTA "
+                            f"(connection attempt {attempt}/{OTA_START_RECONNECT_ATTEMPTS})"
+                        )
+                    )
+                    self._notify(address)
 
-            state.ota_message = "Starting Telink OTA (phase 2/2)"
-            self._notify(address)
-            await self._ota_write(
-                state,
-                client,
-                characteristic,
-                b"\x01\xFF",
-                label="OTA start phase 2",
-            )
-            await asyncio.sleep(0.30)
+                    await asyncio.sleep(0.50)
+                    state.ota_message = "Starting Telink OTA (phase 1/2)"
+                    self._notify(address)
+                    await self._ota_write(
+                        state,
+                        client,
+                        characteristic,
+                        b"\x00\xFF",
+                        label="OTA start phase 1",
+                    )
+                    await asyncio.sleep(OTA_START_COMMAND_GAP_SECONDS)
+
+                    state.ota_message = "Starting Telink OTA (phase 2/2)"
+                    self._notify(address)
+                    await self._ota_write(
+                        state,
+                        client,
+                        characteristic,
+                        b"\x01\xFF",
+                        label="OTA start phase 2",
+                    )
+                    await asyncio.sleep(0.30)
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    if client is not None and client.is_connected:
+                        try:
+                            await asyncio.wait_for(client.disconnect(), timeout=8.0)
+                        except Exception as disconnect_exc:  # noqa: BLE001
+                            _LOGGER.debug(
+                                "Disconnect before OTA-start retry failed for %s: %s",
+                                address,
+                                disconnect_exc,
+                            )
+                    client = None
+                    characteristic = None
+
+                    if (
+                        attempt >= OTA_START_RECONNECT_ATTEMPTS
+                        or not self._is_link_lost(exc)
+                    ):
+                        raise
+
+                    state.ota_message = (
+                        f"OTA start link lost; reconnecting "
+                        f"({attempt + 1}/{OTA_START_RECONNECT_ATTEMPTS})"
+                    )
+                    self._notify(address)
+                    _LOGGER.warning(
+                        "OTA start connection lost for %s; retrying before any "
+                        "firmware block was sent: %s",
+                        address,
+                        exc,
+                    )
+                    try:
+                        await self.async_request_scan(2.0)
+                    except Exception as scan_exc:  # noqa: BLE001
+                        _LOGGER.debug(
+                            "BLE scan before OTA-start retry failed for %s: %s",
+                            address,
+                            scan_exc,
+                        )
+                    await asyncio.sleep(0.50)
+
+            if client is None or characteristic is None:
+                raise HomeAssistantError("Unable to establish Telink OTA session")
 
             for block_number in range(block_count):
                 start = block_number * BLOCK_SIZE
@@ -1339,9 +1447,17 @@ class AtcManager:
                 )
                 if (block_number + 1) % 8 == 0:
                     await self._ota_read_sync(state, client, characteristic)
-                if block_number == 0 or (block_number + 1) % 32 == 0 or block_number + 1 == block_count:
-                    state.ota_progress = min(98, 5 + int(((block_number + 1) / block_count) * 93))
-                    state.ota_message = f"Sending block {block_number + 1}/{block_count}"
+                if (
+                    block_number == 0
+                    or (block_number + 1) % 32 == 0
+                    or block_number + 1 == block_count
+                ):
+                    state.ota_progress = min(
+                        98, 5 + int(((block_number + 1) / block_count) * 93)
+                    )
+                    state.ota_message = (
+                        f"Sending block {block_number + 1}/{block_count}"
+                    )
                     self._notify(address)
                 await asyncio.sleep(0)
 
@@ -1366,6 +1482,9 @@ class AtcManager:
                 try:
                     await asyncio.wait_for(client.disconnect(), timeout=8.0)
                 except Exception as exc:  # noqa: BLE001
-                    _LOGGER.warning("Disconnect failed after OTA for %s: %s", address, exc)
+                    _LOGGER.warning(
+                        "Disconnect failed after OTA for %s: %s", address, exc
+                    )
+            self._update_ota_readiness(state)
             self._notify(address)
 

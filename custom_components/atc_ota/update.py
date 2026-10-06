@@ -117,6 +117,7 @@ class AtcFirmwareUpdate(AtcOtaEntity, UpdateEntity):
             f"- **Battery:** {state.battery if state.battery is not None else 'unknown'}%\n"
             f"- **Battery source:** {state.battery_source or 'unknown'}\n"
             f"- **Battery age:** {f'{battery_age}s' if battery_age is not None else 'unknown'}\n"
+            f"- **Configured battery minimum:** {self.manager.low_battery_threshold}%\n"
             f"- **Broadcast source:** {broadcast}\n"
             f"- **OTA/GATT route:** {gatt}\n"
             f"- **GATT route age:** {route_age}\n"
@@ -162,6 +163,7 @@ class AtcFirmwareUpdate(AtcOtaEntity, UpdateEntity):
             "battery_last_seen": state.battery_last_seen,
             "battery_source": state.battery_source,
             "battery_age_seconds": self.manager.battery_age_seconds(state),
+            "battery_minimum": self.manager.low_battery_threshold,
             "broadcast_rssi": state.rssi,
             "broadcast_proxy": state.strongest_proxy,
             "gatt_rssi": state.gatt_rssi,
