@@ -4,7 +4,7 @@ from __future__ import annotations
 
 DOMAIN = "atc_ota"
 NAME = "ATC OTA"
-VERSION = "0.2.10"
+VERSION = "0.2.11"
 
 BTHOME_UUID = "0000fcd2-0000-1000-8000-00805f9b34fb"
 ENV_SENSING_UUID = "0000181a-0000-1000-8000-00805f9b34fb"
