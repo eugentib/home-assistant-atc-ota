@@ -27,6 +27,8 @@ async def async_setup_entry(hass, entry, async_add_entities) -> None:
                 AtcBroadcastSourceSensor(manager, address),
                 AtcOtaRouteSensor(manager, address),
                 AtcLastOtaRouteSensor(manager, address),
+                AtcOtaProgressSensor(manager, address),
+                AtcOtaStatusSensor(manager, address),
                 AtcOtaReadinessSensor(manager, address),
             ]
         )
@@ -190,6 +192,63 @@ class AtcLastOtaRouteSensor(AtcOtaEntity, SensorEntity):
             "result": state.last_ota_result,
             "timestamp": state.last_ota_at,
             "detail": state.last_ota_detail,
+        }
+
+
+class AtcOtaProgressSensor(AtcOtaEntity, SensorEntity):
+    """Visible OTA progress independent of the frontend update dialog."""
+
+    _attr_name = "OTA progress"
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_icon = "mdi:progress-upload"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, manager, address: str) -> None:
+        super().__init__(manager, address)
+        self._attr_unique_id = f"{address}_ota_progress"
+
+    @property
+    def native_value(self):
+        return self.state_data.ota_progress
+
+    @property
+    def extra_state_attributes(self):
+        state = self.state_data
+        return {
+            "in_progress": state.ota_in_progress,
+            "message": state.ota_message,
+            "result": state.last_ota_result,
+        }
+
+
+class AtcOtaStatusSensor(AtcOtaEntity, SensorEntity):
+    """Compact OTA lifecycle state with detailed message as an attribute."""
+
+    _attr_name = "OTA status"
+    _attr_icon = "mdi:update"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, manager, address: str) -> None:
+        super().__init__(manager, address)
+        self._attr_unique_id = f"{address}_ota_status"
+
+    @property
+    def native_value(self):
+        state = self.state_data
+        if state.ota_in_progress:
+            return "running"
+        return state.last_ota_result or "idle"
+
+    @property
+    def extra_state_attributes(self):
+        state = self.state_data
+        return {
+            "message": state.ota_message,
+            "progress": state.ota_progress,
+            "last_result": state.last_ota_result,
+            "last_detail": state.last_ota_detail,
+            "last_route": state.last_ota_proxy,
+            "last_route_rssi": state.last_ota_rssi,
         }
 
 
