@@ -1,10 +1,18 @@
-# ATC OTA for Home Assistant — v0.3.5
+# ATC OTA for Home Assistant — v0.3.6
 
 ## Compatibility notes
 
 Home Assistant provides `bleak-retry-connector` through its built-in Bluetooth integration, so ATC OTA does not pin or install a second copy. Config-flow imports remain lightweight and Bluetooth runtime code is loaded only after the config entry is set up.
 
 A Home Assistant custom integration for pvvx/ATC Telink thermometers such as **LYWSD03MMC**.
+
+## v0.3.6 real BLE advertisement freshness
+
+- fixes battery freshness after Home Assistant restart by using the Bluetooth observation timestamp (`BluetoothServiceInfoBleak.time`) instead of re-timestamping scanner history as "now";
+- stops using the native BTHome entity's `last_reported` as freshness evidence because Home Assistant's passive processor suppresses unchanged entity writes;
+- a battery percentage that stays at 30%/36% may therefore show an old UI "changed" time while fresh BLE advertisements continue normally;
+- scanner-history replay preserves the original observation age, so an old Battery packet stays stale after restart;
+- fresh BTHome advertisement packets and GATT reads remain the only sources that satisfy the OTA battery freshness gate.
 
 ## v0.3.5 reconcile battery with native Home Assistant BTHome
 
