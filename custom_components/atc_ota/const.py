@@ -4,7 +4,7 @@ from __future__ import annotations
 
 DOMAIN = "atc_ota"
 NAME = "ATC OTA"
-VERSION = "0.2.9"
+VERSION = "0.2.10"
 
 BTHOME_UUID = "0000fcd2-0000-1000-8000-00805f9b34fb"
 ENV_SENSING_UUID = "0000181a-0000-1000-8000-00805f9b34fb"
@@ -35,6 +35,15 @@ CATALOG_REFRESH_SECONDS = 6 * 60 * 60
 METADATA_RETRY_SECONDS = 30 * 60
 OTA_BATTERY_MAX_AGE_SECONDS = 180
 OTA_BATTERY_SCAN_SECONDS = 8
+
+# ESPHome/ESP-IDF may report ESP_GATT_CONGESTED (0x8F / 143) when
+# write-without-response traffic reaches the proxy faster than Bluedroid can
+# drain it. Telink OTA uses thousands of small writes, so pace them slightly
+# and retry only the explicit congestion condition.
+OTA_WRITE_RETRY_ATTEMPTS = 5
+OTA_WRITE_RETRY_BASE_SECONDS = 0.10
+OTA_BLOCK_PACING_SECONDS = 0.012
+OTA_START_COMMAND_GAP_SECONDS = 0.15
 
 PVVX_CATALOG_URL = "https://raw.githubusercontent.com/pvvx/ATC_MiThermometer/master/firmware.json"
 PVVX_RAW_BASE_URL = "https://raw.githubusercontent.com/pvvx/ATC_MiThermometer/master/"
