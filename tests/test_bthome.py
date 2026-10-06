@@ -30,3 +30,21 @@ def test_device_type_and_battery():
     values = mod.parse_bthome_v2(bytes.fromhex("40F001000161"))
     assert values.device_type_id == 1
     assert values.battery == 97
+
+
+def test_power_and_opening_are_not_misread_as_battery():
+    # 0x10 0x01 = power on, 0x11 0x01 = opening open.
+    # v0.2.6's raw fallback incorrectly matched the middle bytes 0x01 0x11
+    # and reported 0x11 == 17% battery.
+    values = mod.parse_bthome_v2(bytes.fromhex("4010011101"))
+    assert values.battery is None
+
+
+def test_packet_id_power_and_opening_are_not_misread_as_battery():
+    values = mod.parse_bthome_v2(bytes.fromhex("40002A10011101"))
+    assert values.battery is None
+
+
+def test_real_battery_survives_following_binary_objects():
+    values = mod.parse_bthome_v2(bytes.fromhex("40002A014F10011101"))
+    assert values.battery == 79
