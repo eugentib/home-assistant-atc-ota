@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass
 from datetime import timedelta
 import logging
 import re
@@ -53,6 +53,7 @@ from .const import (
 )
 from .firmware import fetch_catalog, get_cached_firmware, resolve_stable_firmware
 from .protocol import BLOCK_SIZE, make_block, make_finish, pad_firmware, validate_firmware
+from .readiness import evaluate_ota_readiness
 
 _LOGGER = logging.getLogger(__name__)
 _VERSION_RE = re.compile(r"^V?(\d+)(?:\.(\d+)){1,2}(?:[-+._a-zA-Z0-9]*)?$")
@@ -103,6 +104,14 @@ class DeviceState:
     rssi: int | None = None
     strongest_proxy: str | None = None
     last_seen: float | None = None
+    gatt_rssi: int | None = None
+    gatt_proxy: str | None = None
+    gatt_route_age_seconds: int | None = None
+    gatt_failures: int | None = None
+    gatt_free_slots: int | None = None
+    gatt_slots: int | None = None
+    ota_readiness: str = "unknown"
+    ota_readiness_reason: str | None = None
     last_metadata_success: float | None = None
     last_metadata_error: str | None = None
     ota_in_progress: bool = False
@@ -116,10 +125,35 @@ class DeviceState:
     ha_area_id: str | None = None
 
     def persistent(self) -> dict[str, Any]:
-        data = asdict(self)
-        for key in ("ota_in_progress", "ota_progress", "ota_message"):
-            data.pop(key, None)
-        return data
+        """Return only durable inventory fields.
+
+        RSSI, scanner routes, last-seen timestamps and OTA runtime state are
+        intentionally excluded: they are live observations and persisting them
+        caused unnecessary .storage writes while also restoring stale BLE data.
+        """
+        durable = (
+            "address",
+            "name",
+            "model",
+            "hardware_revision",
+            "software_revision",
+            "firmware_revision",
+            "serial",
+            "manufacturer",
+            "current_version",
+            "latest_version",
+            "latest_filename",
+            "battery",
+            "last_metadata_success",
+            "last_metadata_error",
+            "firmware_source",
+            "firmware_cache_file",
+            "firmware_sha256",
+            "ha_name",
+            "ha_area",
+            "ha_area_id",
+        )
+        return {key: getattr(self, key) for key in durable}
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "DeviceState":
@@ -360,6 +394,109 @@ class AtcManager:
                 return bytes(value)
         return None
 
+    def _scanner_name_for_source(self, address: str, source: str, *, connectable: bool) -> tuple[str, Any | None]:
+        """Resolve a habluetooth source id to its HA scanner/proxy name."""
+        try:
+            observations = bluetooth.async_scanner_devices_by_address(
+                self.hass, address, connectable=connectable
+            )
+        except Exception:
+            observations = []
+        for item in observations:
+            scanner = getattr(item, "scanner", None)
+            scanner_source = str(getattr(scanner, "source", "") or "")
+            if scanner_source == str(source):
+                name = str(
+                    getattr(scanner, "name", None)
+                    or scanner_source
+                    or source
+                    or "unknown"
+                )
+                return name, scanner
+        return str(source or "unknown"), None
+
+    def _update_ota_readiness(self, state: DeviceState) -> None:
+        """Derive a user-facing OTA readiness state from live preflight data."""
+        result = evaluate_ota_readiness(
+            battery=state.battery,
+            battery_fresh=state.battery_last_seen is not None,
+            low_battery_threshold=self.low_battery_threshold,
+            gatt_proxy=state.gatt_proxy,
+            gatt_rssi=state.gatt_rssi,
+            gatt_failures=state.gatt_failures,
+            gatt_free_slots=state.gatt_free_slots,
+        )
+        state.ota_readiness = result.state
+        state.ota_readiness_reason = result.reason
+
+    def _refresh_ble_routes(self, state: DeviceState) -> None:
+        """Refresh broadcast and preferred connectable-route diagnostics from HA."""
+        address = state.address
+
+        try:
+            observations = bluetooth.async_scanner_devices_by_address(
+                self.hass, address, connectable=False
+            )
+        except Exception:
+            observations = []
+        if observations:
+            best = max(observations, key=lambda item: item.advertisement.rssi)
+            state.rssi = int(best.advertisement.rssi)
+            state.strongest_proxy = self._scanner_source(best)
+
+        try:
+            last_info_fn = getattr(bluetooth, "async_last_service_info", None)
+            route = (
+                last_info_fn(self.hass, address, connectable=True)
+                if last_info_fn is not None
+                else None
+            )
+        except Exception:
+            route = None
+
+        if route is None:
+            state.gatt_rssi = None
+            state.gatt_proxy = None
+            state.gatt_route_age_seconds = None
+            state.gatt_failures = None
+            state.gatt_free_slots = None
+            state.gatt_slots = None
+            self._update_ota_readiness(state)
+            return
+
+        state.gatt_rssi = int(route.rssi) if route.rssi is not None else None
+        route_time = getattr(route, "time", None)
+        state.gatt_route_age_seconds = (
+            max(0, int(time.monotonic() - route_time))
+            if isinstance(route_time, (int, float))
+            else None
+        )
+
+        state.gatt_proxy, scanner = self._scanner_name_for_source(
+            address, str(getattr(route, "source", "") or ""), connectable=True
+        )
+        state.gatt_failures = None
+        state.gatt_free_slots = None
+        state.gatt_slots = None
+        if scanner is not None:
+            failures_fn = getattr(scanner, "connection_failures", None)
+            if callable(failures_fn):
+                try:
+                    state.gatt_failures = int(failures_fn(address))
+                except Exception:
+                    pass
+            allocations_fn = getattr(scanner, "get_allocations", None)
+            if callable(allocations_fn):
+                try:
+                    allocations = allocations_fn()
+                except Exception:
+                    allocations = None
+                if allocations is not None:
+                    state.gatt_free_slots = int(allocations.free)
+                    state.gatt_slots = int(allocations.slots)
+
+        self._update_ota_readiness(state)
+
     @callback
     def _async_bluetooth_event(self, info, _change) -> None:
         if not self._looks_like_atc(info):
@@ -368,28 +505,16 @@ class AtcManager:
         address = info.address.upper()
         is_new = address not in self.devices
         state = self.devices.setdefault(address, DeviceState(address=address))
+        persistent_before = None if is_new else state.persistent()
         if info.name and info.name not in (address, "Unknown"):
             state.name = info.name
         self._refresh_home_assistant_name(state)
         state.last_seen = time.time()
 
-        # Compute strongest current observation across HA's shared scanners/proxies.
-        try:
-            observations = bluetooth.async_scanner_devices_by_address(
-                self.hass, address, connectable=False
-            )
-        except Exception:  # API is diagnostic-only; never break data handling.
-            observations = []
-        if observations:
-            best = max(observations, key=lambda item: item.advertisement.rssi)
-            state.rssi = int(best.advertisement.rssi)
-            scanner = best.scanner
-            state.strongest_proxy = str(
-                getattr(scanner, "name", None)
-                or getattr(scanner, "source", None)
-                or "unknown"
-            )
-        else:
+        # Keep passive broadcast provenance separate from the preferred
+        # connectable route Home Assistant will use for GATT/OTA.
+        self._refresh_ble_routes(state)
+        if state.rssi is None:
             state.rssi = int(info.rssi)
             state.strongest_proxy = str(getattr(info, "source", "unknown"))
 
@@ -404,8 +529,10 @@ class AtcManager:
 
         if is_new:
             async_dispatcher_send(self.hass, signal_device_added(self.entry.entry_id), address)
+        self._refresh_ble_routes(state)
         self._notify(address)
-        self._schedule_save()
+        if is_new or state.persistent() != persistent_before:
+            self._schedule_save()
 
         if (
             self.auto_probe
@@ -529,6 +656,11 @@ class AtcManager:
         best currently usable GATT route. Advertisement-only scanners are excluded
         from connectable routing by Home Assistant.
         """
+        state = self.devices.get(address)
+        if state is not None:
+            self._refresh_ble_routes(state)
+            self._notify(address)
+
         ble_device = bluetooth.async_ble_device_from_address(
             self.hass, address, connectable=True
         )
@@ -557,7 +689,7 @@ class AtcManager:
             address,
         )
         try:
-            return await establish_connection(
+            client = await establish_connection(
                 BleakClientWithServiceCache,
                 ble_device,
                 name or address,
@@ -565,7 +697,14 @@ class AtcManager:
                 timeout=12.0,
                 use_services_cache=True,
             )
+            if state is not None:
+                self._refresh_ble_routes(state)
+                self._notify(address)
+            return client
         except Exception as exc:  # noqa: BLE001
+            if state is not None:
+                self._refresh_ble_routes(state)
+                self._notify(address)
             reason = self._reachability_diagnostics(address)
             suffix = f" HA diagnostics: {reason}" if reason else ""
             raise HomeAssistantError(

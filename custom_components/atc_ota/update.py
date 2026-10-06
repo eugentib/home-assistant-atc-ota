@@ -70,7 +70,15 @@ class AtcFirmwareUpdate(AtcOtaEntity, UpdateEntity):
                 f"BLOCKED: battery {battery} is at/below the configured "
                 f"{self.manager.low_battery_threshold}% OTA minimum."
             )
-        return f"Stable pvvx firmware. Battery: {battery}. RSSI: {state.rssi if state.rssi is not None else 'unknown'} dBm."
+        gatt = (
+            f"{state.gatt_proxy} / {state.gatt_rssi} dBm"
+            if state.gatt_proxy and state.gatt_rssi is not None
+            else "no connectable route"
+        )
+        return (
+            f"Stable pvvx firmware. OTA readiness: {state.ota_readiness}. "
+            f"Battery: {battery}. GATT: {gatt}."
+        )
 
     async def async_release_notes(self):
         state = self.state_data
@@ -113,8 +121,16 @@ class AtcFirmwareUpdate(AtcOtaEntity, UpdateEntity):
             "hardware_revision": state.hardware_revision,
             "battery": state.battery,
             "battery_last_seen": state.battery_last_seen,
-            "strongest_rssi": state.rssi,
-            "strongest_proxy": state.strongest_proxy,
+            "broadcast_rssi": state.rssi,
+            "broadcast_proxy": state.strongest_proxy,
+            "gatt_rssi": state.gatt_rssi,
+            "gatt_proxy": state.gatt_proxy,
+            "gatt_route_age_seconds": state.gatt_route_age_seconds,
+            "gatt_failures": state.gatt_failures,
+            "gatt_free_slots": state.gatt_free_slots,
+            "gatt_slots": state.gatt_slots,
+            "ota_readiness": state.ota_readiness,
+            "ota_readiness_reason": state.ota_readiness_reason,
             "ota_message": state.ota_message,
             "ota_progress": state.ota_progress,
             "firmware_source": state.firmware_source,
