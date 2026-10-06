@@ -478,105 +478,50 @@ class AtcManager:
             _LOGGER.debug("Unable to get reachability diagnostics for %s: %s", address, exc)
             return None
 
-    def _connectable_candidates(self, address: str) -> list[tuple[Any, int | None, str]]:
-        """Return fresh connectable BLEDevice routes, strongest RSSI first.
+    async def _establish_client(self, address: str, name: str):
+        """Connect through Home Assistant's native Bluetooth route selection.
 
-        Home Assistant may know the same peripheral through several ESPHome proxies.
-        Trying the concrete BLEDevice from each scanner avoids being pinned to one
-        stale/busy route chosen by the generic best-device helper.
+        Home Assistant already scores all connectable scanners for this address
+        using RSSI, recent failures, connections in progress and available slots.
+        Passing the HA-managed BLEDevice lets the wrapped Bleak backend choose the
+        best currently usable GATT route. Advertisement-only scanners are excluded
+        from connectable routing by Home Assistant.
         """
-        candidates: list[tuple[Any, int | None, str]] = []
-        seen_sources: set[str] = set()
-        try:
-            scanner_devices = bluetooth.async_scanner_devices_by_address(
+        ble_device = bluetooth.async_ble_device_from_address(
+            self.hass, address, connectable=True
+        )
+        if ble_device is None:
+            await self.async_request_scan(3.0)
+            ble_device = bluetooth.async_ble_device_from_address(
                 self.hass, address, connectable=True
             )
-        except Exception as exc:  # noqa: BLE001
-            _LOGGER.debug("Unable to enumerate connectable routes for %s: %s", address, exc)
-            scanner_devices = []
-
-        def rssi_of(item) -> int:
-            advertisement = getattr(item, "advertisement", None)
-            rssi = getattr(advertisement, "rssi", None)
-            return int(rssi) if rssi is not None else -999
-
-        for item in sorted(scanner_devices, key=rssi_of, reverse=True):
-            device = getattr(item, "ble_device", None) or getattr(item, "device", None)
-            if device is None:
-                continue
-            source = self._scanner_source(item)
-            # One BLEDevice per scanner/source is sufficient.
-            if source in seen_sources:
-                continue
-            seen_sources.add(source)
-            rssi = rssi_of(item)
-            candidates.append((device, None if rssi == -999 else rssi, source))
-
-        # Compatibility fallback for HA versions/backends where per-scanner history
-        # is not available. Avoid duplicating the same BLEDevice/source.
-        generic = bluetooth.async_ble_device_from_address(self.hass, address, connectable=True)
-        if generic is not None:
-            details = getattr(generic, "details", None)
-            source = None
-            if isinstance(details, dict):
-                source = details.get("source")
-            source = str(source or "HA best route")
-            if source not in seen_sources:
-                candidates.append((generic, None, source))
-        return candidates
-
-    async def _establish_client(self, address: str, name: str):
-        """Connect through HA, trying each connectable proxy route in RSSI order."""
-        candidates = self._connectable_candidates(address)
-        if not candidates:
-            await self.async_request_scan(3.0)
-            candidates = self._connectable_candidates(address)
-        if not candidates:
+        if ble_device is None:
             reason = self._reachability_diagnostics(address)
             extra = f"; {reason}" if reason else ""
             raise HomeAssistantError(
                 f"No connectable Home Assistant Bluetooth route currently sees {address}{extra}"
             )
 
-        errors: list[str] = []
-        for index, (ble_device, rssi, source) in enumerate(candidates, start=1):
-            _LOGGER.info(
-                "Connecting to %s via route %s/%s source=%s RSSI=%s",
-                address,
-                index,
-                len(candidates),
-                source,
-                rssi if rssi is not None else "unknown",
-            )
-            try:
-                return await establish_connection(
-                    BleakClientWithServiceCache,
-                    ble_device,
-                    name or address,
-                    max_attempts=1,
-                    timeout=12.0,
-                    use_services_cache=True,
-                )
-            except Exception as exc:  # noqa: BLE001
-                errors.append(
-                    f"{source} ({rssi if rssi is not None else 'RSSI ?'} dBm): "
-                    f"{type(exc).__name__}: {exc}"
-                )
-                _LOGGER.warning(
-                    "Connection route failed for %s via %s RSSI=%s: %s: %s",
-                    address, source, rssi, type(exc).__name__, exc
-                )
-                # Let ESPHome/HA settle the previous failed attempt before trying
-                # another proxy route.
-                await asyncio.sleep(0.35)
-
-        reason = self._reachability_diagnostics(address)
-        suffix = f" HA diagnostics: {reason}" if reason else ""
-        raise HomeAssistantError(
-            f"Unable to connect to {address} through {len(candidates)} HA Bluetooth route(s). "
-            + " | ".join(errors)
-            + suffix
+        _LOGGER.info(
+            "Connecting to %s using Home Assistant Bluetooth route selection",
+            address,
         )
+        try:
+            return await establish_connection(
+                BleakClientWithServiceCache,
+                ble_device,
+                name or address,
+                max_attempts=2,
+                timeout=12.0,
+                use_services_cache=True,
+            )
+        except Exception as exc:  # noqa: BLE001
+            reason = self._reachability_diagnostics(address)
+            suffix = f" HA diagnostics: {reason}" if reason else ""
+            raise HomeAssistantError(
+                f"Unable to connect to {address} through Home Assistant Bluetooth routing: "
+                f"{type(exc).__name__}: {exc}{suffix}"
+            ) from exc
 
     async def _read_text(self, client, uuid: str) -> str | None:
         characteristic = client.services.get_characteristic(uuid)
