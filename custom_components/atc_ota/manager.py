@@ -1233,16 +1233,16 @@ class AtcManager:
             raise HomeAssistantError("ATC OTA is shutting down; refusing a new update")
         state = self.devices[address]
         previous_version = state.current_version
-        install_task = asyncio.current_task()
-        if install_task is not None:
-            self._install_tasks[address] = install_task
 
         # Guard the complete install operation, including battery checks, catalog
-        # refresh and firmware preparation. Home Assistant's update entity can then
-        # report a consistent in-progress state from the first await until cleanup.
+        # refresh and firmware preparation. Do not replace the tracked task if a
+        # second service call arrives while the first update is still active.
         if address in self._installing_addresses:
             raise HomeAssistantError("An OTA update is already in progress for this device")
 
+        install_task = asyncio.current_task()
+        if install_task is not None:
+            self._install_tasks[address] = install_task
         self._installing_addresses.add(address)
         state.ota_in_progress = True
         state.ota_progress = 0
