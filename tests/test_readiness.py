@@ -1,10 +1,12 @@
 from pathlib import Path
 import importlib.util
+import sys
 
 
 ROOT = Path(__file__).parents[1] / "custom_components" / "atc_ota"
 spec = importlib.util.spec_from_file_location("atc_readiness_test", ROOT / "readiness.py")
 mod = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = mod
 spec.loader.exec_module(mod)
 
 
