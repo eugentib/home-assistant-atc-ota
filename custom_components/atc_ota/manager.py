@@ -445,8 +445,11 @@ class AtcManager:
             state.strongest_proxy = self._scanner_source(best)
 
         try:
-            route = bluetooth.async_last_service_info(
-                self.hass, address, connectable=True
+            last_info_fn = getattr(bluetooth, "async_last_service_info", None)
+            route = (
+                last_info_fn(self.hass, address, connectable=True)
+                if last_info_fn is not None
+                else None
             )
         except Exception:
             route = None
@@ -686,7 +689,7 @@ class AtcManager:
             address,
         )
         try:
-            return await establish_connection(
+            client = await establish_connection(
                 BleakClientWithServiceCache,
                 ble_device,
                 name or address,
@@ -694,7 +697,14 @@ class AtcManager:
                 timeout=12.0,
                 use_services_cache=True,
             )
+            if state is not None:
+                self._refresh_ble_routes(state)
+                self._notify(address)
+            return client
         except Exception as exc:  # noqa: BLE001
+            if state is not None:
+                self._refresh_ble_routes(state)
+                self._notify(address)
             reason = self._reachability_diagnostics(address)
             suffix = f" HA diagnostics: {reason}" if reason else ""
             raise HomeAssistantError(
