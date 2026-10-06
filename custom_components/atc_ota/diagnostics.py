@@ -14,6 +14,13 @@ async def async_get_config_entry_diagnostics(hass, entry):
         data["ota_in_progress"] = state.ota_in_progress
         data["ota_progress"] = state.ota_progress
         data["ota_message"] = state.ota_message
+        data["battery_live"] = {
+            "value": state.battery,
+            "source": state.battery_source,
+            "last_seen": state.battery_last_seen,
+            "age_seconds": manager.battery_age_seconds(state),
+            "fresh": manager.battery_is_fresh(state),
+        }
         data["broadcast"] = {
             "rssi": state.rssi,
             "proxy": state.strongest_proxy,

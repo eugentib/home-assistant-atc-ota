@@ -90,6 +90,7 @@ class AtcFirmwareUpdate(AtcOtaEntity, UpdateEntity):
             f"{state.gatt_proxy or 'none'} / "
             f"{state.gatt_rssi if state.gatt_rssi is not None else 'unknown'} dBm"
         )
+        battery_age = self.manager.battery_age_seconds(state)
         route_age = (
             f"{state.gatt_route_age_seconds}s"
             if state.gatt_route_age_seconds is not None
@@ -114,6 +115,8 @@ class AtcFirmwareUpdate(AtcOtaEntity, UpdateEntity):
             f"- **Readiness:** `{state.ota_readiness}`\n"
             f"- **Reason:** {state.ota_readiness_reason or '—'}\n"
             f"- **Battery:** {state.battery if state.battery is not None else 'unknown'}%\n"
+            f"- **Battery source:** {state.battery_source or 'unknown'}\n"
+            f"- **Battery age:** {f'{battery_age}s' if battery_age is not None else 'unknown'}\n"
             f"- **Broadcast source:** {broadcast}\n"
             f"- **OTA/GATT route:** {gatt}\n"
             f"- **GATT route age:** {route_age}\n"
@@ -157,6 +160,8 @@ class AtcFirmwareUpdate(AtcOtaEntity, UpdateEntity):
             "hardware_revision": state.hardware_revision,
             "battery": state.battery,
             "battery_last_seen": state.battery_last_seen,
+            "battery_source": state.battery_source,
+            "battery_age_seconds": self.manager.battery_age_seconds(state),
             "broadcast_rssi": state.rssi,
             "broadcast_proxy": state.strongest_proxy,
             "gatt_rssi": state.gatt_rssi,

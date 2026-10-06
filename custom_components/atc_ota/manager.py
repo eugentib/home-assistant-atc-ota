@@ -16,7 +16,7 @@ from bthome_ble import BTHomeBluetoothDeviceData
 from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import area_registry as ar, device_registry as dr
+from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
@@ -103,6 +103,7 @@ class DeviceState:
     latest_filename: str | None = None
     battery: int | None = None
     battery_last_seen: float | None = None
+    battery_source: str | None = None
     rssi: int | None = None
     strongest_proxy: str | None = None
     last_seen: float | None = None
@@ -216,6 +217,7 @@ class AtcManager:
                 # prevents a bogus value persisted by the v0.2.6 parser from being
                 # trusted immediately after upgrading to v0.2.7.
                 state.battery_last_seen = None
+                state.battery_source = "cache" if state.battery is not None else None
                 self.devices[address.upper()] = state
             except (TypeError, ValueError):
                 _LOGGER.warning("Ignoring invalid stored ATC OTA device %s", address)
@@ -402,6 +404,66 @@ class AtcManager:
             return True
         return name.startswith(("ATC_", "LYWSD", "MHO-", "MJWSD", "CGG1", "CGDK"))
 
+    def _native_bthome_battery(
+        self, address: str
+    ) -> tuple[int | None, float | None]:
+        """Read Home Assistant's already-published BTHome battery state.
+
+        This avoids depending on callback ordering between the native BTHome
+        integration and ATC OTA. Entity discovery is registry-based, not tied
+        to a generated entity_id.
+        """
+        address = self._normalize_address(address)
+        bthome_entries = [
+            entry
+            for entry in self.hass.config_entries.async_entries("bthome")
+            if self._normalize_address(entry.unique_id) == address
+        ]
+        if not bthome_entries:
+            return None, None
+
+        registry = er.async_get(self.hass)
+        for config_entry in bthome_entries:
+            for entity in er.async_entries_for_config_entry(
+                registry, config_entry.entry_id
+            ):
+                if entity.domain != "sensor" or entity.platform != "bthome":
+                    continue
+                device_class = entity.device_class or entity.original_device_class
+                if getattr(device_class, "value", device_class) != "battery":
+                    continue
+
+                state = self.hass.states.get(entity.entity_id)
+                if state is None or state.state in ("unknown", "unavailable"):
+                    continue
+                try:
+                    battery = int(round(float(state.state)))
+                except (TypeError, ValueError):
+                    continue
+                if not 0 <= battery <= 100:
+                    continue
+
+                reported = getattr(state, "last_reported", None)
+                if reported is None:
+                    reported = getattr(state, "last_updated", None)
+                reported_ts = (
+                    reported.timestamp() if reported is not None else None
+                )
+                return battery, reported_ts
+        return None, None
+
+    def _sync_native_bthome_battery(self, state: DeviceState) -> None:
+        battery, reported_ts = self._native_bthome_battery(state.address)
+        if battery is None or reported_ts is None:
+            return
+        if (
+            state.battery_last_seen is None
+            or reported_ts >= state.battery_last_seen
+        ):
+            state.battery = battery
+            state.battery_last_seen = reported_ts
+            state.battery_source = "home_assistant_bthome"
+
     def _parse_bthome_library(
         self,
         address: str,
@@ -514,11 +576,22 @@ class AtcManager:
             return bool(flags & (1 << 1)), flags
         return None, None
 
+    def battery_age_seconds(self, state: DeviceState) -> int | None:
+        if state.battery_last_seen is None:
+            return None
+        return max(0, int(time.time() - state.battery_last_seen))
+
+    def battery_is_fresh(self, state: DeviceState) -> bool:
+        age = self.battery_age_seconds(state)
+        return age is not None and age <= OTA_BATTERY_MAX_AGE_SECONDS
+
     def _update_ota_readiness(self, state: DeviceState) -> None:
         """Derive a user-facing OTA readiness state from live preflight data."""
+        self._sync_native_bthome_battery(state)
+        battery_fresh = self.battery_is_fresh(state)
         result = evaluate_ota_readiness(
             battery=state.battery,
-            battery_fresh=state.battery_last_seen is not None,
+            battery_fresh=battery_fresh,
             low_battery_threshold=self.low_battery_threshold,
             gatt_proxy=state.gatt_proxy,
             gatt_rssi=state.gatt_rssi,
@@ -643,6 +716,7 @@ class AtcManager:
             if battery is not None:
                 state.battery = battery
                 state.battery_last_seen = time.time()
+                state.battery_source = "bthome_advertisement"
             if firmware:
                 state.current_version = firmware
 
@@ -916,6 +990,7 @@ class AtcManager:
                 if battery is not None:
                     state.battery = battery
                     state.battery_last_seen = time.time()
+                    state.battery_source = "gatt"
 
                 revisions = [sw, fw]
                 current = next(

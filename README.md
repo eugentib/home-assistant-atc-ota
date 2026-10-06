@@ -1,10 +1,18 @@
-# ATC OTA for Home Assistant — v0.3.4
+# ATC OTA for Home Assistant — v0.3.5
 
 ## Compatibility notes
 
 Home Assistant provides `bleak-retry-connector` through its built-in Bluetooth integration, so ATC OTA does not pin or install a second copy. Config-flow imports remain lightweight and Bluetooth runtime code is loaded only after the config entry is set up.
 
 A Home Assistant custom integration for pvvx/ATC Telink thermometers such as **LYWSD03MMC**.
+
+## v0.3.5 reconcile battery with native Home Assistant BTHome
+
+- uses the already-published native BTHome Battery entity as the preferred battery source when available;
+- resolves the BTHome battery entity through the entity registry/config entry instead of assuming an entity_id;
+- uses Home Assistant `last_reported` to determine battery freshness, so an unchanged 30% value can still be recognized as recently reported;
+- falls back to direct BTHome advertisement parsing and then GATT when native BTHome state is unavailable;
+- exposes battery `source`, `age_seconds` and `last_seen` in ATC OTA diagnostics.
 
 ## v0.3.4 inclusive OTA battery minimum
 
@@ -147,7 +155,7 @@ The **Device Area** is mirrored as well. If the existing BTHome/Bluetooth device
 - battery sensor and low-battery binary sensor;
 - per-device **Refresh firmware info** button;
 - configurable low-battery threshold (default 30%);
-- OTA requires a recent battery reading; if battery is unknown/stale or at/below the configured threshold, flashing is refused before the Telink OTA session starts;
+- OTA requires a recent battery reading; if battery is unknown/stale or below the configured threshold, flashing is refused before the Telink OTA session starts;
 - serialized metadata reads and OTA jobs;
 - all GATT clients disconnect in `finally` blocks.
 
@@ -197,7 +205,7 @@ The update entity reports installed/latest versions, OTA progress, battery, stro
 
 ## Battery safety
 
-The default OTA battery minimum is **30%** and can be changed under the integration's Options. v0.2.7 requires a recent battery reading before flashing and refuses OTA when the value is unknown/stale or at/below the threshold. There is no double-click bypass; lowering the configured threshold is the explicit override.
+The default OTA battery minimum is **30%** and can be changed under the integration's Options. v0.2.7 requires a recent battery reading before flashing and refuses OTA when the value is unknown/stale or below the threshold. There is no double-click bypass; lowering the configured threshold is the explicit override.
 
 ## Bluetooth architecture
 
