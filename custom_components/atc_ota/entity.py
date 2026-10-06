@@ -14,6 +14,7 @@ class AtcOtaEntity(Entity):
     """Base entity bound to one discovered thermometer."""
 
     _attr_has_entity_name = True
+    _attr_should_poll = False
 
     def __init__(self, manager, address: str) -> None:
         self.manager = manager
