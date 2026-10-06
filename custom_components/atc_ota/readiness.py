@@ -20,6 +20,9 @@ def evaluate_ota_readiness(
     gatt_rssi: int | None,
     gatt_failures: int | None,
     gatt_free_slots: int | None,
+    gatt_route_age_seconds: int | None,
+    gatt_route_max_age_seconds: int,
+    gatt_active_connections: bool | None,
 ) -> OtaReadiness:
     """Return a stable user-facing OTA preflight summary."""
     if battery is None or not battery_fresh:
@@ -36,6 +39,19 @@ def evaluate_ota_readiness(
         return OtaReadiness(
             "no_gatt_route",
             "No connectable Home Assistant Bluetooth route is currently available",
+        )
+    if gatt_active_connections is False:
+        return OtaReadiness(
+            "no_active_gatt",
+            f"{gatt_proxy} is an ESPHome Bluetooth Proxy without ACTIVE_CONNECTIONS",
+        )
+    if (
+        gatt_route_age_seconds is not None
+        and gatt_route_age_seconds > gatt_route_max_age_seconds
+    ):
+        return OtaReadiness(
+            "stale_gatt_route",
+            f"GATT route is stale ({gatt_route_age_seconds}s old)",
         )
     if gatt_free_slots == 0:
         return OtaReadiness(
