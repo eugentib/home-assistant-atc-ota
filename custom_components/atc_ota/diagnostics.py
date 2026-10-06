@@ -16,6 +16,7 @@ async def async_get_config_entry_diagnostics(hass, entry):
         data["ota_message"] = state.ota_message
         data["battery_live"] = {
             "value": state.battery,
+            "minimum": manager.low_battery_threshold,
             "source": state.battery_source,
             "last_seen": state.battery_last_seen,
             "age_seconds": manager.battery_age_seconds(state),
