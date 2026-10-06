@@ -61,6 +61,8 @@ async def async_get_config_entry_diagnostics(hass, entry):
     return {
         "manager_instance": manager.instance_id,
         "options": dict(entry.options),
+        "options_backup": dict(manager._options_backup),
+        "options_recovered_keys": list(manager.options_recovered_keys),
         "catalog_loaded": manager.catalog is not None,
         "devices": devices,
     }
