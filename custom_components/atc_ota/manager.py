@@ -1100,7 +1100,7 @@ class AtcManager:
                         "from BTHome or the Battery Level GATT characteristic."
                     )
 
-                if state.battery <= self.low_battery_threshold:
+                if state.battery < self.low_battery_threshold:
                     raise HomeAssistantError(
                         f"OTA refused: battery is {state.battery}% and the configured minimum is "
                         f"{self.low_battery_threshold}%. Change the ATC OTA option only if you "
