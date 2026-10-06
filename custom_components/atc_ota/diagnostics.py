@@ -33,6 +33,13 @@ async def async_get_config_entry_diagnostics(hass, entry):
             "state": state.ota_readiness,
             "reason": state.ota_readiness_reason,
         }
+        data["last_ota"] = {
+            "proxy": state.last_ota_proxy,
+            "rssi": state.last_ota_rssi,
+            "result": state.last_ota_result,
+            "timestamp": state.last_ota_at,
+            "detail": state.last_ota_detail,
+        }
         data["ha_reachability"] = manager._reachability_diagnostics(address)
         devices[address] = data
     return {
