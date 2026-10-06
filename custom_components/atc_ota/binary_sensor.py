@@ -41,4 +41,4 @@ class AtcLowBatteryBinarySensor(AtcOtaEntity, BinarySensorEntity):
 
     @property
     def available(self) -> bool:
-        return self.state_data.battery is not None
+        return self.state_data.battery_last_seen is not None
