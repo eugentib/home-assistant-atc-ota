@@ -11,6 +11,7 @@ import time
 from typing import Any
 
 from bleak_retry_connector import BleakClientWithServiceCache, establish_connection
+from bthome_ble import BTHomeBluetoothDeviceData
 
 from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant, callback
@@ -187,6 +188,7 @@ class AtcManager:
         self._ota_lock = asyncio.Lock()
         self._installing_addresses: set[str] = set()
         self._metadata_tasks: dict[str, asyncio.Task] = {}
+        self._bthome_parsers: dict[str, BTHomeBluetoothDeviceData] = {}
         self._save_task: asyncio.Task | None = None
         self._last_metadata_attempt: dict[str, float] = {}
         self._unsubs: list[Any] = []
@@ -400,6 +402,51 @@ class AtcManager:
             return True
         return name.startswith(("ATC_", "LYWSD", "MHO-", "MJWSD", "CGG1", "CGDK"))
 
+    def _parse_bthome_library(
+        self,
+        address: str,
+        info,
+    ) -> tuple[int | None, str | None]:
+        """Parse BTHome with the same library used by Home Assistant.
+
+        Returns an explicit battery percentage from the current advertisement,
+        plus an actual firmware version when object 0xF1/0xF2 is present.
+        """
+        parser = self._bthome_parsers.setdefault(
+            address, BTHomeBluetoothDeviceData()
+        )
+        try:
+            update = parser.update(info)
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.debug("bthome-ble parse failed for %s: %s", address, exc)
+            return None, None
+
+        battery: int | None = None
+        for device_key, value in update.entity_values.items():
+            if getattr(device_key, "key", None) != "battery":
+                continue
+            native = getattr(value, "native_value", None)
+            if native is None:
+                continue
+            try:
+                parsed = int(native)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= parsed <= 100:
+                battery = parsed
+                break
+
+        firmware: str | None = None
+        device_info = update.devices.get(None)
+        sw_version = getattr(device_info, "sw_version", None)
+        if (
+            isinstance(sw_version, str)
+            and _VERSION_RE.match(sw_version.strip())
+        ):
+            firmware = normalize_version(sw_version)
+
+        return battery, firmware
+
     def _service_data(self, info, uuid: str) -> bytes | None:
         target = uuid.lower()
         for key, value in info.service_data.items():
@@ -582,12 +629,22 @@ class AtcManager:
 
         bthome = self._service_data(info, BTHOME_UUID)
         if bthome is not None:
+            # Primary parser: use the exact bthome-ble library version HA uses.
+            battery, firmware = self._parse_bthome_library(address, info)
+
+            # Keep the small built-in parser as a compatibility fallback for
+            # metadata/object layouts not yet surfaced by bthome-ble.
             parsed = parse_bthome_v2(bthome)
-            if parsed.battery is not None:
-                state.battery = parsed.battery
+            if battery is None:
+                battery = parsed.battery
+            if firmware is None and parsed.firmware_version:
+                firmware = normalize_version(parsed.firmware_version)
+
+            if battery is not None:
+                state.battery = battery
                 state.battery_last_seen = time.time()
-            if parsed.firmware_version:
-                state.current_version = normalize_version(parsed.firmware_version)
+            if firmware:
+                state.current_version = firmware
 
         if is_new:
             async_dispatcher_send(self.hass, signal_device_added(self.entry.entry_id), address)
