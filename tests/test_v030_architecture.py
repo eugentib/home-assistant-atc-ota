@@ -31,6 +31,6 @@ def test_volatile_ble_state_is_not_persisted():
 
 def test_manager_uses_separate_connectable_history():
     source = (ROOT / "manager.py").read_text(encoding="utf-8")
-    assert "async_last_service_info(" in source
+    assert '"async_last_service_info"' in source
     assert "connectable=True" in source
     assert "gatt_proxy" in source
