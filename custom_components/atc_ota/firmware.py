@@ -1,8 +1,9 @@
-"""pvvx firmware catalog and download helpers."""
+"""pvvx firmware catalog, download and persistent cache helpers."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -13,6 +14,12 @@ from .const import (
     PVVX_CATALOG_URL,
     PVVX_RAW_BASE_URL,
 )
+from .firmware_cache import (
+    firmware_cache_filename,
+    read_cached_firmware,
+    sha256_hex,
+    write_cached_firmware,
+)
 from .protocol import validate_firmware
 
 
@@ -22,6 +29,16 @@ class FirmwareChoice:
     path: str
     filename: str
     url: str
+
+
+@dataclass(slots=True)
+class FirmwarePayload:
+    """Firmware bytes plus diagnostics about where they came from."""
+
+    data: bytes
+    source: str
+    cache_file: str
+    sha256: str
 
 
 def bcd_version(value: int) -> str:
@@ -97,3 +114,33 @@ async def download_firmware(hass, choice: FirmwareChoice) -> bytes:
         raise RuntimeError("Downloaded firmware is larger than 2 MiB")
     validate_firmware(data)
     return data
+
+
+async def get_cached_firmware(hass, choice: FirmwareChoice) -> FirmwarePayload:
+    """Return a validated persistent cached image, downloading only on cache miss."""
+    cache_dir = Path(hass.config.path(".storage", "atc_ota_firmware"))
+    cache_name = firmware_cache_filename(choice.version, choice.path)
+    cache_path = cache_dir / cache_name
+
+    cached = await hass.async_add_executor_job(
+        read_cached_firmware,
+        cache_path,
+        max_size=MAX_FIRMWARE_SIZE,
+        validator=validate_firmware,
+    )
+    if cached is not None:
+        return FirmwarePayload(
+            data=cached,
+            source="cache",
+            cache_file=cache_name,
+            sha256=sha256_hex(cached),
+        )
+
+    data = await download_firmware(hass, choice)
+    await hass.async_add_executor_job(write_cached_firmware, cache_path, data)
+    return FirmwarePayload(
+        data=data,
+        source="download",
+        cache_file=cache_name,
+        sha256=sha256_hex(data),
+    )
