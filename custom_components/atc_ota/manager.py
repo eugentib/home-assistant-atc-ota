@@ -108,6 +108,9 @@ class DeviceState:
     rssi: int | None = None
     strongest_proxy: str | None = None
     last_seen: float | None = None
+    ble_callback_last_seen: float | None = None
+    ble_callback_count: int = 0
+    ble_callback_error: str | None = None
     gatt_rssi: int | None = None
     gatt_proxy: str | None = None
     gatt_route_age_seconds: int | None = None
@@ -190,6 +193,7 @@ class AtcManager:
         self._ota_lock = asyncio.Lock()
         self._installing_addresses: set[str] = set()
         self._metadata_tasks: dict[str, asyncio.Task] = {}
+        self._route_refresh_tasks: dict[str, asyncio.Task] = {}
         self._bthome_parsers: dict[str, BTHomeBluetoothDeviceData] = {}
         self._save_task: asyncio.Task | None = None
         self._last_metadata_attempt: dict[str, float] = {}
@@ -249,10 +253,6 @@ class AtcManager:
             )
         )
 
-        # Seed from HA's existing scanner history without opening a second scanner.
-        for info in bluetooth.async_discovered_service_info(self.hass, connectable=False):
-            self._async_bluetooth_event(info, bluetooth.BluetoothChange.ADVERTISEMENT)
-
         self.entry.async_on_unload(self.async_shutdown)
         self.entry.async_create_background_task(
             self.hass,
@@ -268,6 +268,9 @@ class AtcManager:
         for task in self._metadata_tasks.values():
             task.cancel()
         self._metadata_tasks.clear()
+        for task in self._route_refresh_tasks.values():
+            task.cancel()
+        self._route_refresh_tasks.clear()
         if self._save_task is not None:
             self._save_task.cancel()
             self._save_task = None
@@ -569,9 +572,16 @@ class AtcManager:
         except Exception:
             observations = []
         if observations:
-            best = max(observations, key=lambda item: item.advertisement.rssi)
-            state.rssi = int(best.advertisement.rssi)
-            state.strongest_proxy = self._scanner_source(best)
+            usable = []
+            for item in observations:
+                advertisement = getattr(item, "advertisement", None)
+                rssi = getattr(advertisement, "rssi", None)
+                if isinstance(rssi, (int, float)):
+                    usable.append((float(rssi), item))
+            if usable:
+                _rssi, best = max(usable, key=lambda pair: pair[0])
+                state.rssi = int(_rssi)
+                state.strongest_proxy = self._scanner_source(best)
 
         try:
             last_info_fn = getattr(bluetooth, "async_last_service_info", None)
@@ -633,52 +643,133 @@ class AtcManager:
 
         self._update_ota_readiness(state)
 
+    def _schedule_route_refresh(self, address: str) -> None:
+        """Coalesce expensive HA route diagnostics outside the BLE hot path."""
+        address = address.upper()
+        existing = self._route_refresh_tasks.get(address)
+        if existing is not None and not existing.done():
+            return
+        task = self.entry.async_create_background_task(
+            self.hass,
+            self._async_deferred_route_refresh(address),
+            f"ATC OTA route refresh {address}",
+        )
+        self._route_refresh_tasks[address] = task
+        task.add_done_callback(
+            lambda done, addr=address: self._route_refresh_tasks.pop(addr, None)
+        )
+
+    async def _async_deferred_route_refresh(self, address: str) -> None:
+        """Refresh route diagnostics after the advertisement callback returns."""
+        await asyncio.sleep(0.15)
+        state = self.devices.get(address)
+        if state is None:
+            return
+        try:
+            self._refresh_ble_routes(state)
+        except Exception as exc:  # noqa: BLE001
+            state.ble_callback_error = (
+                f"route refresh: {type(exc).__name__}: {exc}"
+            )
+            _LOGGER.exception("Deferred BLE route refresh failed for %s", address)
+        self._notify(address)
+
     @callback
     def _async_bluetooth_event(self, info, _change) -> None:
+        """Ingest one BLE advertisement with a deliberately small hot path."""
         if not self._looks_like_atc(info):
             return
 
-        address = info.address.upper()
+        address = self._normalize_address(getattr(info, "address", None))
+        if not address:
+            return
+
         is_new = address not in self.devices
         state = self.devices.setdefault(address, DeviceState(address=address))
         persistent_before = None if is_new else state.persistent()
-        if info.name and info.name not in (address, "Unknown"):
-            state.name = info.name
-        self._refresh_home_assistant_name(state)
+
+        # Record receipt first. Even if optional parsing/diagnostics fail, the UI
+        # can show that ATC OTA is still receiving Bluetooth advertisements.
+        state.ble_callback_count += 1
+        state.ble_callback_last_seen = time.time()
+        state.ble_callback_error = None
         advertisement_time = self._advertisement_wall_time(info)
         state.last_seen = advertisement_time
 
-        # Keep passive broadcast provenance separate from the preferred
-        # connectable route Home Assistant will use for GATT/OTA.
-        self._refresh_ble_routes(state)
-        if state.rssi is None:
-            state.rssi = int(info.rssi)
-            state.strongest_proxy = str(getattr(info, "source", "unknown"))
+        if info.name and info.name not in (address, "Unknown"):
+            state.name = info.name
+
+        # Do not walk HA registries for every 2.5 s advertisement.
+        if is_new or state.ha_name is None:
+            try:
+                self._refresh_home_assistant_name(state)
+            except Exception as exc:  # noqa: BLE001
+                state.ble_callback_error = (
+                    f"identity: {type(exc).__name__}: {exc}"
+                )
+                _LOGGER.debug(
+                    "Unable to refresh HA identity for %s: %s", address, exc
+                )
+
+        # Publish the current advertisement immediately. The deferred route
+        # refresh will replace this with the strongest scanner observation.
+        try:
+            if info.rssi is not None:
+                state.rssi = int(info.rssi)
+            source = str(getattr(info, "source", "") or "")
+            if source:
+                state.strongest_proxy = source
+        except Exception as exc:  # noqa: BLE001
+            state.ble_callback_error = f"rssi: {type(exc).__name__}: {exc}"
 
         bthome = self._service_data(info, BTHOME_UUID)
         if bthome is not None:
-            # Primary parser: use the exact bthome-ble library version HA uses.
-            battery, firmware = self._parse_bthome_library(address, info)
+            try:
+                # Primary parser: exactly the bthome-ble library HA uses.
+                battery, firmware = self._parse_bthome_library(address, info)
 
-            # Keep the small built-in parser as a compatibility fallback for
-            # metadata/object layouts not yet surfaced by bthome-ble.
-            parsed = parse_bthome_v2(bthome)
-            if battery is None:
-                battery = parsed.battery
-            if firmware is None and parsed.firmware_version:
-                firmware = normalize_version(parsed.firmware_version)
+                # Small local parser remains a fallback only.
+                parsed = parse_bthome_v2(bthome)
+                if battery is None:
+                    battery = parsed.battery
+                if firmware is None and parsed.firmware_version:
+                    firmware = normalize_version(parsed.firmware_version)
 
-            if battery is not None:
-                state.battery = battery
-                state.battery_last_seen = advertisement_time
-                state.battery_source = "bthome_advertisement"
-            if firmware:
-                state.current_version = firmware
+                if battery is not None:
+                    state.battery = battery
+                    state.battery_last_seen = advertisement_time
+                    state.battery_source = "bthome_advertisement"
+                if firmware:
+                    state.current_version = firmware
+            except Exception as exc:  # noqa: BLE001
+                state.ble_callback_error = (
+                    f"BTHome parse: {type(exc).__name__}: {exc}"
+                )
+                _LOGGER.exception(
+                    "Unable to process BTHome advertisement for %s", address
+                )
+
+        # Battery readiness can be updated cheaply from the current route snapshot.
+        try:
+            self._update_ota_readiness(state)
+        except Exception as exc:  # noqa: BLE001
+            state.ble_callback_error = (
+                f"readiness: {type(exc).__name__}: {exc}"
+            )
+            _LOGGER.exception("Unable to update OTA readiness for %s", address)
 
         if is_new:
-            async_dispatcher_send(self.hass, signal_device_added(self.entry.entry_id), address)
-        self._refresh_ble_routes(state)
+            async_dispatcher_send(
+                self.hass,
+                signal_device_added(self.entry.entry_id),
+                address,
+            )
+
+        # Update entities immediately, then refresh expensive route diagnostics
+        # out-of-band. This prevents scanner/registry work from delaying BLE ingest.
         self._notify(address)
+        self._schedule_route_refresh(address)
+
         if is_new or state.persistent() != persistent_before:
             self._schedule_save()
 
