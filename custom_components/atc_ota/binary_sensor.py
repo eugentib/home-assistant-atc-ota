@@ -37,7 +37,7 @@ class AtcLowBatteryBinarySensor(AtcOtaEntity, BinarySensorEntity):
     @property
     def is_on(self):
         battery = self.state_data.battery
-        return battery is not None and battery <= self.manager.low_battery_threshold
+        return battery is not None and battery < self.manager.low_battery_threshold
 
     @property
     def available(self) -> bool:
