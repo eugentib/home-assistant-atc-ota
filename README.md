@@ -1,10 +1,17 @@
-# ATC OTA for Home Assistant — v0.2.9
+# ATC OTA for Home Assistant — v0.2.10
 
 ## Compatibility notes
 
 Home Assistant provides `bleak-retry-connector` through its built-in Bluetooth integration, so ATC OTA does not pin or install a second copy. Config-flow imports remain lightweight and Bluetooth runtime code is loaded only after the config entry is set up.
 
 A Home Assistant custom integration for pvvx/ATC Telink thermometers such as **LYWSD03MMC**.
+
+## v0.2.10 ESPHome GATT congestion handling
+
+- handles ESP-IDF `ESP_GATT_CONGESTED` (143 / `0x8F`) during Telink OTA writes with bounded exponential backoff;
+- adds a small pacing delay between firmware blocks so ESPHome Bluetooth Proxy does not receive thousands of write-without-response packets as fast as the host can enqueue them;
+- applies the same congestion retry to the OTA start commands, synchronization reads and final command;
+- reports congestion retries in `ota_message` instead of aborting immediately on the first transient GATT congestion error.
 
 ## v0.2.9 Home Assistant progress state and Bluetooth routing
 
