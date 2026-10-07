@@ -1,10 +1,18 @@
-# ATC OTA for Home Assistant — v0.3.13
+# ATC OTA for Home Assistant — v0.3.14
 
 ## Compatibility notes
 
 Home Assistant provides `bleak-retry-connector` through its built-in Bluetooth integration, so ATC OTA does not pin or install a second copy. Config-flow imports remain lightweight and Bluetooth runtime code is loaded only after the config entry is set up.
 
 A Home Assistant custom integration for pvvx/ATC Telink thermometers such as **LYWSD03MMC**.
+
+## v0.3.14 bind entities to the current manager instance
+
+- stops entities from permanently capturing the manager object that existed when they were created;
+- every Sensor, Binary Sensor, Button and Update entity now resolves the current manager from `config_entry.runtime_data` at use time;
+- fixes cases where a surviving/stale Button entity could invoke an old manager while the Firmware entity displayed state from a newer manager;
+- keeps dispatcher subscriptions on the stable config-entry id;
+- exposes both `manager_instance` and `entity_created_manager_instance` on Firmware and Refresh firmware info for direct stale-binding diagnosis.
 
 ## v0.3.13 make firmware metadata refresh bounded and observable
 
