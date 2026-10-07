@@ -46,9 +46,13 @@ def test_manager_uses_bthome_library_before_fallback():
     assert primary < fallback
 
 
-def test_cached_battery_is_not_exposed_as_live_after_restart():
+def test_cached_battery_remains_visible_but_not_ota_fresh():
     sensor = (ROOT / "sensor.py").read_text(encoding="utf-8")
     binary = (ROOT / "binary_sensor.py").read_text(encoding="utf-8")
 
-    assert "self.manager.battery_is_fresh(self.state_data)" in sensor
+    battery_block = sensor.split("class AtcBatterySensor", 1)[1].split(
+        "class AtcRssiSensor", 1
+    )[0]
+    assert "return self.state_data.battery is not None" in battery_block
+    assert '"fresh_for_ota": self.manager.battery_is_fresh(state)' in battery_block
     assert "self.manager.battery_is_fresh(self.state_data)" in binary

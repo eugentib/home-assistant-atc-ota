@@ -1,10 +1,18 @@
-# ATC OTA for Home Assistant — v0.3.11
+# ATC OTA for Home Assistant — v0.3.12
 
 ## Compatibility notes
 
 Home Assistant provides `bleak-retry-connector` through its built-in Bluetooth integration, so ATC OTA does not pin or install a second copy. Config-flow imports remain lightweight and Bluetooth runtime code is loaded only after the config entry is set up.
 
 A Home Assistant custom integration for pvvx/ATC Telink thermometers such as **LYWSD03MMC**.
+
+## v0.3.12 keep last-known battery visible in the UI
+
+- separates Battery entity availability from OTA safety freshness;
+- the Battery sensor remains available whenever ATC OTA has a known battery value, including a persisted value after restart;
+- Battery exposes `fresh_for_ota`, `age_seconds`, `source` and `last_seen`;
+- OTA readiness and the Low battery diagnostic remain freshness-gated, so a stale value can never authorize an OTA;
+- fixes device-list rows switching to `—` after the 180 s OTA battery freshness window expires.
 
 ## v0.3.11 protect options across integration updates
 
