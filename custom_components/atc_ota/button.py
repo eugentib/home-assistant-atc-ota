@@ -40,6 +40,7 @@ class AtcRefreshInfoButton(AtcOtaEntity, ButtonEntity):
         state = self.state_data
         return {
             "manager_instance": self.manager.instance_id,
+            "entity_created_manager_instance": self.created_manager_instance,
             "refresh_status": state.metadata_refresh_status,
             "refresh_phase": state.metadata_refresh_phase,
             "request_count": state.metadata_refresh_request_count,
