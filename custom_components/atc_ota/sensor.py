@@ -56,7 +56,10 @@ class AtcBatterySensor(AtcOtaEntity, SensorEntity):
 
     @property
     def available(self) -> bool:
-        return self.manager.battery_is_fresh(self.state_data)
+        # UI availability is deliberately different from OTA safety freshness.
+        # Keep showing the last known battery value even when it is too old to
+        # authorize an OTA. OTA readiness still requires a fresh reading.
+        return self.state_data.battery is not None
 
     @property
     def extra_state_attributes(self):
@@ -65,6 +68,7 @@ class AtcBatterySensor(AtcOtaEntity, SensorEntity):
             "source": state.battery_source,
             "age_seconds": self.manager.battery_age_seconds(state),
             "last_seen": state.battery_last_seen,
+            "fresh_for_ota": self.manager.battery_is_fresh(state),
         }
 
 
