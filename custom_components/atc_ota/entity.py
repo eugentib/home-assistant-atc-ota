@@ -17,8 +17,23 @@ class AtcOtaEntity(Entity):
     _attr_should_poll = False
 
     def __init__(self, manager, address: str) -> None:
-        self.manager = manager
+        # Keep the config entry, not a permanently captured manager instance.
+        # If Home Assistant reloads/replaces runtime_data while an entity object
+        # survives longer than expected, every entity action must still use the
+        # current manager.
+        self._entry = manager.entry
+        self._created_manager_instance = manager.instance_id
         self.address = address
+
+    @property
+    def manager(self):
+        """Return the manager currently owned by this config entry."""
+        return self._entry.runtime_data
+
+    @property
+    def created_manager_instance(self) -> str:
+        """Manager instance this entity object was originally created with."""
+        return self._created_manager_instance
 
     @property
     def state_data(self):
@@ -43,7 +58,7 @@ class AtcOtaEntity(Entity):
         self.async_on_remove(
             async_dispatcher_connect(
                 self.hass,
-                signal_device_updated(self.manager.entry.entry_id, self.address),
+                signal_device_updated(self._entry.entry_id, self.address),
                 self._async_manager_updated,
             )
         )

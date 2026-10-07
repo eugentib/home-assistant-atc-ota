@@ -156,6 +156,7 @@ class AtcFirmwareUpdate(AtcOtaEntity, UpdateEntity):
         state = self.state_data
         return {
             "manager_instance": self.manager.instance_id,
+            "entity_created_manager_instance": self.created_manager_instance,
             "address": state.address,
             "home_assistant_name": state.ha_name,
             "home_assistant_area": state.ha_area,
