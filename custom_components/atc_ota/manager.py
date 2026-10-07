@@ -43,6 +43,8 @@ from .const import (
     OTA_WRITE_RETRY_ATTEMPTS,
     OTA_WRITE_RETRY_BASE_SECONDS,
     METADATA_RETRY_SECONDS,
+    METADATA_GATT_LOCK_TIMEOUT_SECONDS,
+    METADATA_GATT_READ_TIMEOUT_SECONDS,
     OTA_CHAR_UUID,
     STORAGE_KEY,
     STORAGE_VERSION,
@@ -130,6 +132,13 @@ class DeviceState:
     ota_readiness_reason: str | None = None
     last_metadata_success: float | None = None
     last_metadata_error: str | None = None
+    metadata_refresh_status: str = "idle"
+    metadata_refresh_phase: str | None = None
+    metadata_refresh_request_count: int = 0
+    metadata_refresh_started_at: float | None = None
+    metadata_refresh_finished_at: float | None = None
+    metadata_refresh_manager_instance: str | None = None
+    metadata_refresh_origin: str | None = None
     ota_in_progress: bool = False
     ota_progress: int | None = None
     ota_message: str | None = None
@@ -1144,7 +1153,12 @@ class AtcManager:
         if characteristic is None:
             return None
         try:
-            value = bytes(await client.read_gatt_char(characteristic))
+            value = bytes(
+                await asyncio.wait_for(
+                    client.read_gatt_char(characteristic),
+                    timeout=METADATA_GATT_READ_TIMEOUT_SECONDS,
+                )
+            )
         except Exception as exc:  # noqa: BLE001
             _LOGGER.debug("Unable to read %s: %s", uuid, exc)
             return None
@@ -1155,77 +1169,154 @@ class AtcManager:
         if characteristic is None:
             return None
         try:
-            value = bytes(await client.read_gatt_char(characteristic))
+            value = bytes(
+                await asyncio.wait_for(
+                    client.read_gatt_char(characteristic),
+                    timeout=METADATA_GATT_READ_TIMEOUT_SECONDS,
+                )
+            )
         except Exception:  # noqa: BLE001
             return None
         return max(0, min(100, int(value[0]))) if value else None
 
-    async def async_refresh_device(self, address: str) -> None:
-        """Read metadata through HA's shared Bluetooth route and release GATT promptly."""
+    async def async_refresh_device(
+        self, address: str, *, origin: str = "background"
+    ) -> None:
+        """Read metadata through HA's shared Bluetooth route with bounded waits."""
         address = address.upper()
         state = self.devices.get(address)
         if state is None:
             return
-        async with self._gatt_lock:
-            client = None
+
+        state.metadata_refresh_request_count += 1
+        state.metadata_refresh_status = "waiting"
+        state.metadata_refresh_phase = "waiting_for_gatt_lock"
+        state.metadata_refresh_started_at = time.time()
+        state.metadata_refresh_finished_at = None
+        state.metadata_refresh_manager_instance = self.instance_id
+        state.metadata_refresh_origin = origin
+        state.last_metadata_error = None
+        self._notify(address)
+
+        acquired = False
+        client = None
+        try:
             try:
-                client = await self._establish_client(address, state.name or address)
-                device_name = await self._read_text(client, UUID_DEVICE_NAME)
-                model = await self._read_text(client, UUID_MODEL_NUMBER)
-                serial = await self._read_text(client, UUID_SERIAL_NUMBER)
-                fw = await self._read_text(client, UUID_FIRMWARE_REV)
-                hw = await self._read_text(client, UUID_HARDWARE_REV)
-                sw = await self._read_text(client, UUID_SOFTWARE_REV)
-                manufacturer = await self._read_text(client, UUID_MANUFACTURER)
-                battery = await self._read_battery(client)
-
-                if device_name:
-                    state.name = device_name
-                self._refresh_home_assistant_name(state)
-                state.model = model or state.model
-                state.serial = serial or state.serial
-                state.firmware_revision = fw or state.firmware_revision
-                state.hardware_revision = hw or state.hardware_revision
-                state.software_revision = sw or state.software_revision
-                state.manufacturer = manufacturer or state.manufacturer
-                if battery is not None:
-                    state.battery = battery
-                    state.battery_last_seen = time.time()
-                    state.battery_source = "gatt"
-
-                revisions = [sw, fw]
-                current = next(
-                    (
-                        normalize_version(value)
-                        for value in revisions
-                        if value and _VERSION_RE.match(value.strip())
-                    ),
-                    None,
+                await asyncio.wait_for(
+                    self._gatt_lock.acquire(),
+                    timeout=METADATA_GATT_LOCK_TIMEOUT_SECONDS,
                 )
-                if current:
-                    state.current_version = current
-                state.last_metadata_success = time.time()
-                state.last_metadata_error = None
-                self._apply_latest(state)
-                # A GATT metadata refresh may change the battery independently
-                # of advertisement routing. Re-evaluate preflight immediately.
-                self._update_ota_readiness(state)
-            except Exception as exc:  # noqa: BLE001
-                state.last_metadata_error = f"{type(exc).__name__}: {exc}"
-                _LOGGER.warning("Metadata read failed for %s: %s", address, state.last_metadata_error)
-                raise
-            finally:
-                if client is not None and client.is_connected:
-                    try:
-                        await asyncio.wait_for(client.disconnect(), timeout=8.0)
-                    except Exception as exc:  # noqa: BLE001
-                        _LOGGER.warning("Disconnect failed after metadata read for %s: %s", address, exc)
+                acquired = True
+            except TimeoutError as exc:
+                raise HomeAssistantError(
+                    "Timed out waiting for the shared ATC OTA GATT lock "
+                    f"after {METADATA_GATT_LOCK_TIMEOUT_SECONDS}s"
+                ) from exc
+
+            state.metadata_refresh_status = "running"
+            state.metadata_refresh_phase = "connecting"
+            self._notify(address)
+
+            client = await self._establish_client(address, state.name or address)
+
+            fields = [
+                ("device_name", UUID_DEVICE_NAME),
+                ("model", UUID_MODEL_NUMBER),
+                ("serial", UUID_SERIAL_NUMBER),
+                ("firmware_revision", UUID_FIRMWARE_REV),
+                ("hardware_revision", UUID_HARDWARE_REV),
+                ("software_revision", UUID_SOFTWARE_REV),
+                ("manufacturer", UUID_MANUFACTURER),
+            ]
+            values: dict[str, str | None] = {}
+            for field_name, uuid_value in fields:
+                state.metadata_refresh_phase = f"reading_{field_name}"
                 self._notify(address)
-                await self._async_save()
+                values[field_name] = await self._read_text(client, uuid_value)
+
+            state.metadata_refresh_phase = "reading_battery"
+            self._notify(address)
+            battery = await self._read_battery(client)
+
+            device_name = values["device_name"]
+            model = values["model"]
+            serial = values["serial"]
+            fw = values["firmware_revision"]
+            hw = values["hardware_revision"]
+            sw = values["software_revision"]
+            manufacturer = values["manufacturer"]
+
+            if device_name:
+                state.name = device_name
+            self._refresh_home_assistant_name(state)
+            state.model = model or state.model
+            state.serial = serial or state.serial
+            state.firmware_revision = fw or state.firmware_revision
+            state.hardware_revision = hw or state.hardware_revision
+            state.software_revision = sw or state.software_revision
+            state.manufacturer = manufacturer or state.manufacturer
+            if battery is not None:
+                state.battery = battery
+                state.battery_last_seen = time.time()
+                state.battery_source = "gatt"
+
+            revisions = [sw, fw]
+            current = next(
+                (
+                    normalize_version(value)
+                    for value in revisions
+                    if value and _VERSION_RE.match(value.strip())
+                ),
+                None,
+            )
+            if current is None:
+                raise HomeAssistantError(
+                    "Connected over GATT, but neither Software Revision nor "
+                    "Firmware Revision returned a valid firmware version; "
+                    f"cached version {state.current_version or 'unknown'} was not "
+                    "accepted as refreshed metadata"
+                )
+
+            state.current_version = current
+            state.last_metadata_success = time.time()
+            state.last_metadata_error = None
+            state.metadata_refresh_status = "success"
+            state.metadata_refresh_phase = "complete"
+            self._apply_latest(state)
+            self._update_ota_readiness(state)
+        except Exception as exc:  # noqa: BLE001
+            state.last_metadata_error = f"{type(exc).__name__}: {exc}"
+            state.metadata_refresh_status = "failed"
+            state.metadata_refresh_phase = "failed"
+            _LOGGER.warning(
+                "Metadata read failed for %s (%s): %s",
+                address,
+                origin,
+                state.last_metadata_error,
+            )
+            raise
+        finally:
+            if client is not None and client.is_connected:
+                try:
+                    await asyncio.wait_for(client.disconnect(), timeout=8.0)
+                except Exception as exc:  # noqa: BLE001
+                    _LOGGER.warning(
+                        "Disconnect failed after metadata read for %s: %s",
+                        address,
+                        exc,
+                    )
+            if acquired:
+                self._gatt_lock.release()
+            state.metadata_refresh_finished_at = time.time()
+            self._notify(address)
+            await self._async_save()
 
     async def async_user_refresh_device(self, address: str) -> None:
-        self._last_metadata_attempt[address.upper()] = 0.0
-        await self.async_refresh_device(address)
+        """Run an explicit user-requested metadata refresh immediately."""
+        address = address.upper()
+        self._last_metadata_attempt[address] = 0.0
+        await self.async_refresh_device(address, origin="manual")
+
 
     @staticmethod
     def _versions_match(actual: str | None, expected: str | None) -> bool:
