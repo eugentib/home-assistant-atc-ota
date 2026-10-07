@@ -198,5 +198,13 @@ class AtcFirmwareUpdate(AtcOtaEntity, UpdateEntity):
             "firmware_source": state.firmware_source,
             "firmware_cache_file": state.firmware_cache_file,
             "firmware_sha256": state.firmware_sha256,
+            "last_metadata_success": state.last_metadata_success,
             "last_metadata_error": state.last_metadata_error,
+            "metadata_refresh_status": state.metadata_refresh_status,
+            "metadata_refresh_phase": state.metadata_refresh_phase,
+            "metadata_refresh_request_count": state.metadata_refresh_request_count,
+            "metadata_refresh_started_at": state.metadata_refresh_started_at,
+            "metadata_refresh_finished_at": state.metadata_refresh_finished_at,
+            "metadata_refresh_manager_instance": state.metadata_refresh_manager_instance,
+            "metadata_refresh_origin": state.metadata_refresh_origin,
         }
