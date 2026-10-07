@@ -1,10 +1,19 @@
-# ATC OTA for Home Assistant — v0.3.12
+# ATC OTA for Home Assistant — v0.3.13
 
 ## Compatibility notes
 
 Home Assistant provides `bleak-retry-connector` through its built-in Bluetooth integration, so ATC OTA does not pin or install a second copy. Config-flow imports remain lightweight and Bluetooth runtime code is loaded only after the config entry is set up.
 
 A Home Assistant custom integration for pvvx/ATC Telink thermometers such as **LYWSD03MMC**.
+
+## v0.3.13 make firmware metadata refresh bounded and observable
+
+- bounds the wait for the shared GATT lock to 15 seconds instead of allowing a manual refresh to wait indefinitely behind a stuck metadata/OTA operation;
+- bounds every metadata GATT characteristic read to 8 seconds;
+- treats a refresh as failed unless Software Revision or Firmware Revision returns a valid version;
+- never accepts an old cached firmware version as proof that a refresh succeeded;
+- exposes refresh status, phase, request count, timestamps, origin and manager instance on the Firmware entity and Refresh firmware info button;
+- manual refreshes are tagged with `origin=manual`, making it possible to prove that the button action reached the current manager.
 
 ## v0.3.12 keep last-known battery visible in the UI
 
