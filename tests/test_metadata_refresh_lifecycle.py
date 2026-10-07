@@ -44,7 +44,8 @@ def test_refresh_requires_a_real_firmware_revision():
 
     assert "if current is None:" in block
     assert "cached version" in block
-    assert "was not accepted as refreshed metadata" in block
+    assert '"was not "' in block
+    assert '"accepted as refreshed metadata"' in block
     assert "state.current_version = current" in block
 
 
