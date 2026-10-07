@@ -39,4 +39,4 @@ def test_battery_entity_exposes_provenance_and_age():
 
     assert '"source": state.battery_source' in source
     assert '"age_seconds": self.manager.battery_age_seconds(state)' in source
-    assert "self.manager.battery_is_fresh(self.state_data)" in source
+    assert '"fresh_for_ota": self.manager.battery_is_fresh(state)' in source
