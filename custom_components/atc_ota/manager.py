@@ -311,6 +311,13 @@ class AtcManager(OtaTransportMixin):
                 # trusted immediately after upgrading to v0.2.7.
                 state.battery_last_seen = None
                 state.battery_source = "cache" if state.battery is not None else None
+                # The completed OTA outcome is durable, but live transfer
+                # percentages are intentionally not persisted. Restore the
+                # *terminal* 100% for a verified successful OTA, so the device
+                # page does not show "success" next to "Unknown" on restart.
+                if state.last_ota_result == "success":
+                    state.ota_progress = 100
+                    state.ota_message = "Previous OTA completed successfully"
                 self.devices[address.upper()] = state
             except (TypeError, ValueError):
                 _LOGGER.warning("Ignoring invalid stored ATC OTA device %s", address)
