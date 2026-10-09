@@ -213,6 +213,7 @@ class AtcManager:
         self._last_metadata_attempt: dict[str, float] = {}
         self._options_backup: dict[str, Any] = {}
         self.options_recovered_keys: list[str] = []
+        self.firmware_updates_hidden_migrated = False
         self._unsubs: list[Any] = []
 
     @staticmethod
@@ -275,6 +276,9 @@ class AtcManager:
 
     async def async_setup(self) -> None:
         stored = await self._store.async_load() or {}
+        self.firmware_updates_hidden_migrated = bool(
+            stored.get("firmware_updates_hidden_migrated", False)
+        )
 
         saved_options = self._known_options(stored.get("options_backup", {}))
         current_options = dict(self.entry.options)
@@ -989,6 +993,7 @@ class AtcManager:
                     addr: state.persistent() for addr, state in self.devices.items()
                 },
                 "options_backup": dict(self._options_backup),
+                "firmware_updates_hidden_migrated": self.firmware_updates_hidden_migrated,
             }
         )
 

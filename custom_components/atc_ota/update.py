@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from homeassistant.components.update import UpdateDeviceClass, UpdateEntity, UpdateEntityFeature
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers import entity_registry as er
 
 from .const import PVVX_REPO_URL
 from .entity import AtcOtaEntity
@@ -13,6 +14,25 @@ from .manager import signal_device_added, version_tuple
 async def async_setup_entry(hass, entry, async_add_entities) -> None:
     manager = entry.runtime_data
     known: set[str] = set()
+
+    # Hidden-by-default affects only new registry entries. Migrate existing
+    # ATC OTA firmware entities once so current users lose the Settings alert
+    # immediately, while respecting any later explicit user visibility change.
+    if not manager.firmware_updates_hidden_migrated:
+        registry = er.async_get(hass)
+        for address in manager.devices:
+            entity_id = registry.async_get_entity_id(
+                "update", "atc_ota", f"{address}_firmware"
+            )
+            if entity_id is None:
+                continue
+            registered = registry.async_get(entity_id)
+            if registered is not None and registered.hidden_by is None:
+                registry.async_update_entity(
+                    entity_id, hidden_by=er.RegistryEntryHider.INTEGRATION
+                )
+        manager.firmware_updates_hidden_migrated = True
+        manager._schedule_save()
 
     def add(address: str) -> None:
         if address in known:
@@ -29,6 +49,8 @@ class AtcFirmwareUpdate(AtcOtaEntity, UpdateEntity):
     _attr_name = "Firmware"
     _attr_title = "pvvx ATC firmware"
     _attr_device_class = UpdateDeviceClass.FIRMWARE
+    # Keep update.* functional, but omit it from the Settings dashboard alert.
+    _attr_entity_registry_visible_default = False
     _attr_supported_features = (
         UpdateEntityFeature.INSTALL | UpdateEntityFeature.PROGRESS | UpdateEntityFeature.RELEASE_NOTES
     )
