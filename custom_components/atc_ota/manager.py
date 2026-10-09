@@ -1352,15 +1352,20 @@ class AtcManager:
         # Give the thermometer time to reboot and resume advertisements.
         await asyncio.sleep(6.0)
 
-        # First allow BTHome advertisements to confirm the new version without
-        # consuming a GATT connection. Explicit BTHome firmware objects update
-        # state.current_version in _async_bluetooth_event().
+        # First allow BTHome advertisements to confirm a *changed* version
+        # without consuming a GATT connection. On a same-version reinstall,
+        # current_version was already equal to the target before any OTA data
+        # was transmitted, so that cached value is not proof of success.
+        same_version_reinstall = self._versions_match(previous_version, target_version)
         try:
             await self.async_request_scan(4.0)
         except Exception as exc:  # noqa: BLE001
             _LOGGER.debug("Post-OTA verification scan failed for %s: %s", address, exc)
 
-        if self._versions_match(state.current_version, target_version):
+        if (
+            not same_version_reinstall
+            and self._versions_match(state.current_version, target_version)
+        ):
             state.ota_message = f"Verified firmware {target_version} via advertisement"
             self._notify(address)
             return
@@ -1406,8 +1411,9 @@ class AtcManager:
         """Queue a user-requested OTA without blocking the Button service call.
 
         The existing install coroutine remains the single owner of OTA safety
-        checks, task tracking and progress. This method schedules it only when
-        a genuine firmware update is known to be available.
+        checks, task tracking and progress. Explicitly pressing the button may
+        reinstall the same firmware version to test OTA progress or recover a
+        device; it never bypasses battery and connection safety checks.
         """
         address = address.upper()
         state = self.devices.get(address)
@@ -1428,10 +1434,14 @@ class AtcManager:
             raise HomeAssistantError(
                 "Firmware version is unknown; use Refresh firmware info first"
             )
-        if installed >= latest:
+        # Reinstalling the *same* stable release is intentional and permitted.
+        # Do not silently downgrade devices that already run a newer version.
+        if installed > latest and not self._versions_match(
+            state.current_version, state.latest_version
+        ):
             raise HomeAssistantError(
-                f"Firmware is already up to date ({state.current_version}); "
-                "refresh firmware info if you changed the firmware externally"
+                f"Installed firmware {state.current_version} is newer than the "
+                f"available stable release {state.latest_version}; refusing downgrade"
             )
 
         # Reserve the slot synchronously so repeated button presses cannot queue

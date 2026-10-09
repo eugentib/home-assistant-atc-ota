@@ -20,7 +20,8 @@ def test_install_button_keeps_ota_nonblocking_and_explicit():
     assert "self._pending_install_addresses.add(address)" in start
     assert "self._installing_addresses" in start
     assert "state.ota_in_progress" in start
-    assert "if installed >= latest:" in start
+    assert "if installed >= latest:" not in start
+    assert "if installed > latest and not self._versions_match(" in start
     assert "self.entry.async_create_background_task(" in start
     assert "self.async_install_latest(address)" in start
 
