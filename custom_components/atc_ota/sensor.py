@@ -8,7 +8,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import EntityCategory
 
 from .entity import AtcOtaEntity
-from .manager import signal_device_added
+from .manager import signal_device_added, version_tuple
 
 
 async def async_setup_entry(hass, entry, async_add_entities) -> None:
@@ -22,6 +22,7 @@ async def async_setup_entry(hass, entry, async_add_entities) -> None:
         async_add_entities(
             [
                 AtcBatterySensor(manager, address),
+                AtcFirmwareAvailabilitySensor(manager, address),
                 AtcRssiSensor(manager, address),
                 AtcGattRssiSensor(manager, address),
                 AtcBroadcastSourceSensor(manager, address),
@@ -69,6 +70,36 @@ class AtcBatterySensor(AtcOtaEntity, SensorEntity):
             "age_seconds": self.manager.battery_age_seconds(state),
             "last_seen": state.battery_last_seen,
             "fresh_for_ota": self.manager.battery_is_fresh(state),
+        }
+
+
+class AtcFirmwareAvailabilitySensor(AtcOtaEntity, SensorEntity):
+    """Report available firmware updates directly in the device Sensors section."""
+
+    _attr_name = "Firmware update"
+    _attr_icon = "mdi:cellphone-arrow-down"
+
+    def __init__(self, manager, address: str) -> None:
+        super().__init__(manager, address)
+        self._attr_unique_id = f"{address}_firmware_update_status"
+
+    @property
+    def native_value(self):
+        state = self.state_data
+        installed = version_tuple(state.current_version)
+        latest = version_tuple(state.latest_version)
+        if installed is None or latest is None:
+            return "Unknown"
+        return "Update available" if installed < latest else "Up-to-date"
+
+    @property
+    def extra_state_attributes(self):
+        state = self.state_data
+        return {
+            "installed_version": state.current_version,
+            "latest_version": state.latest_version,
+            "last_metadata_success": state.last_metadata_success,
+            "last_metadata_error": state.last_metadata_error,
         }
 
 
@@ -234,7 +265,7 @@ class AtcOtaProgressSensor(AtcOtaEntity, SensorEntity):
     _attr_name = "OTA progress"
     _attr_native_unit_of_measurement = PERCENTAGE
     _attr_icon = "mdi:progress-upload"
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    # Display transfer progress in device Sensors, not buried under Diagnostics.
 
     def __init__(self, manager, address: str) -> None:
         super().__init__(manager, address)
@@ -259,7 +290,7 @@ class AtcOtaStatusSensor(AtcOtaEntity, SensorEntity):
 
     _attr_name = "OTA status"
     _attr_icon = "mdi:update"
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    # Keep the live install state alongside OTA progress in device Sensors.
 
     def __init__(self, manager, address: str) -> None:
         super().__init__(manager, address)
