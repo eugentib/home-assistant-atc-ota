@@ -141,11 +141,11 @@ def test_flash_uses_start_commands_blocks_finish_then_disconnects():
         payload = bytes(range(32))
         await transport._flash(State.address, payload, "5.9")
         assert client.writes == [
-            b"\\x00\\xff",
-            b"\\x01\\xff",
-            b"B" + b"\\x00\\x00" + payload[:16],
-            b"B" + b"\\x01\\x00" + payload[16:],
-            b"FINISH" + b"\\x02\\x00",
+            b"\x00\xff",
+            b"\x01\xff",
+            b"B" + b"\x00\x00" + payload[:16],
+            b"B" + b"\x01\x00" + payload[16:],
+            b"FINISH" + b"\x02\x00",
         ]
         assert client.disconnects == 1
         assert transport.devices[State.address].ota_progress == 99
