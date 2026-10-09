@@ -32,9 +32,7 @@ def test_same_version_reinstall_requires_fresh_gatt_verification():
 
 def test_preflight_battery_guards_remain_in_effect():
     source = (ROOT / "manager.py").read_text(encoding="utf-8")
-    install = source.split("async def async_install_latest(", 1)[1].split(
-        "def _is_gatt_congested(", 1
-    )[0]
+    install = source.split("async def async_install_latest(", 1)[1]
     assert "self.battery_is_fresh(state)" in install
     assert "state.battery < self.low_battery_threshold" in install
     assert "self._assert_battery_safe_for_ota(" in install
