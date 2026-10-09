@@ -203,6 +203,7 @@ class AtcManager:
         self._gatt_lock = asyncio.Lock()
         self._ota_lock = asyncio.Lock()
         self._installing_addresses: set[str] = set()
+        self._pending_install_addresses: set[str] = set()
         self._install_tasks: dict[str, asyncio.Task] = {}
         self._shutting_down = False
         self.instance_id = uuid.uuid4().hex[:8]
@@ -1398,6 +1399,55 @@ class AtcManager:
         raise HomeAssistantError(
             f"OTA transfer finished but firmware verification failed. "
             f"Device reports {reported}; expected {target_version}{detail}"
+        )
+
+    @callback
+    def start_install_latest(self, address: str) -> None:
+        """Queue a user-requested OTA without blocking the Button service call.
+
+        The existing install coroutine remains the single owner of OTA safety
+        checks, task tracking and progress. This method schedules it only when
+        a genuine firmware update is known to be available.
+        """
+        address = address.upper()
+        state = self.devices.get(address)
+        if state is None:
+            raise HomeAssistantError(f"ATC OTA device {address} is not known")
+        if self._shutting_down:
+            raise HomeAssistantError("ATC OTA is shutting down")
+        if (
+            address in self._pending_install_addresses
+            or address in self._installing_addresses
+            or state.ota_in_progress
+        ):
+            raise HomeAssistantError("A firmware update is already running for this device")
+
+        installed = version_tuple(state.current_version)
+        latest = version_tuple(state.latest_version)
+        if installed is None or latest is None:
+            raise HomeAssistantError(
+                "Firmware version is unknown; use Refresh firmware info first"
+            )
+        if installed >= latest:
+            raise HomeAssistantError(
+                f"Firmware is already up to date ({state.current_version}); "
+                "refresh firmware info if you changed the firmware externally"
+            )
+
+        # Reserve the slot synchronously so repeated button presses cannot queue
+        # duplicate OTA jobs before the first task is scheduled to run.
+        self._pending_install_addresses.add(address)
+        try:
+            task = self.entry.async_create_background_task(
+                self.hass,
+                self.async_install_latest(address),
+                f"ATC OTA firmware install {address}",
+            )
+        except Exception:
+            self._pending_install_addresses.discard(address)
+            raise
+        task.add_done_callback(
+            lambda _done, addr=address: self._pending_install_addresses.discard(addr)
         )
 
     async def async_install_latest(self, address: str) -> None:
