@@ -41,7 +41,7 @@ def _load_transport_mixin():
         body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), cls],
         type_ignores=[],
     )
-    exec(compile(module, str(OTA_MODULE), "exec"), namespace)
+    exec(compile(ast.fix_missing_locations(module), str(OTA_MODULE), "exec"), namespace)
     return namespace["OtaTransportMixin"]
 
 
