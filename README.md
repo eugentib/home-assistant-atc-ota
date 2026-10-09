@@ -1,10 +1,20 @@
-# ATC OTA for Home Assistant — v0.3.15
+# ATC OTA for Home Assistant — v0.3.16
 
 ## Compatibility notes
 
 Home Assistant provides `bleak-retry-connector` through its built-in Bluetooth integration, so ATC OTA does not pin or install a second copy. Config-flow imports remain lightweight and Bluetooth runtime code is loaded only after the config entry is set up.
 
 A Home Assistant custom integration for pvvx/ATC Telink thermometers such as **LYWSD03MMC**.
+
+## v0.3.16 restore visible OTA controls within each device
+
+- retains the hidden native `update.*` firmware entity, so ATC thermometers do not contribute to the Settings dashboard update-alert count;
+- adds a visible **Install firmware update** button under the device's Controls that schedules the existing OTA workflow without holding up the button service call;
+- prevents duplicate queued OTA jobs and refuses an unnecessary reinstall when the known installed version is already up to date; after an external downgrade, use **Refresh firmware info** to update stale version metadata before installing;
+- adds a visible **Firmware update** sensor showing `Update available` or `Up-to-date`, with installed/latest version attributes;
+- moves the existing **OTA progress** (%) and **OTA status** sensors from Diagnostics to the main device Sensors section (same entity IDs/unique IDs);
+- the existing OTA backend still performs the same battery, firmware verification, GATT routing and safety checks; failure details remain visible on OTA status;
+- native graphical progress in the hidden `update.*` more-info dialog remains unavailable unless that hidden entity is opened explicitly; the new device Sensors show numerical progress and install status.
 
 ## v0.3.15 hide firmware updates from Settings dashboard alerts
 
