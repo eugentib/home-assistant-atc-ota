@@ -10,7 +10,8 @@ def test_actual_route_is_taken_from_connected_ha_backend():
     assert 'getattr(client, "_connected_scanner", None)' in source
     assert 'getattr(ha_backend, "_connected_scanner", None)' in source
     assert "get_discovered_device_advertisement_data" in source
-    assert "_actual_connected_route(client, address)" in source
+    transport = (ROOT / "ota_transport.py").read_text(encoding="utf-8")
+    assert "_actual_connected_route(client, address)" in transport
 
 
 def test_last_ota_route_is_persisted_and_exposed():
