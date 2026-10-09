@@ -5,16 +5,17 @@ ROOT = Path(__file__).parents[1] / "custom_components" / "atc_ota"
 
 
 def test_battery_is_revalidated_before_flash_and_before_start_commands():
-    source = (ROOT / "manager.py").read_text(encoding="utf-8")
+    manager = (ROOT / "manager.py").read_text(encoding="utf-8")
+    transport = (ROOT / "ota_transport.py").read_text(encoding="utf-8")
 
-    assert 'context="final preflight"' in source
-    assert 'context="OTA start"' in source
-    assert "def _assert_battery_safe_for_ota" in source
-    assert "state.battery < self.low_battery_threshold" in source
+    assert 'context="final preflight"' in manager
+    assert 'context="OTA start"' in transport
+    assert "def _assert_battery_safe_for_ota" in transport
+    assert "state.battery < self.low_battery_threshold" in transport
 
 
 def test_ota_start_reconnect_is_bounded_and_before_firmware_blocks():
-    source = (ROOT / "manager.py").read_text(encoding="utf-8")
+    source = (ROOT / "ota_transport.py").read_text(encoding="utf-8")
 
     flash = source.split("async def _flash_locked", 1)[1]
     assert "OTA_START_RECONNECT_ATTEMPTS" in flash
@@ -26,7 +27,7 @@ def test_ota_start_reconnect_is_bounded_and_before_firmware_blocks():
 
 
 def test_link_loss_detection_covers_observed_failure():
-    source = (ROOT / "manager.py").read_text(encoding="utf-8")
+    source = (ROOT / "ota_transport.py").read_text(encoding="utf-8")
 
     assert '"not connected"' in source
     assert '"timeout waiting for connect"' in source

@@ -1,10 +1,18 @@
-# ATC OTA for Home Assistant — v0.3.17
+# ATC OTA for Home Assistant — v0.3.18
 
 ## Compatibility notes
 
 Home Assistant provides `bleak-retry-connector` through its built-in Bluetooth integration, so ATC OTA does not pin or install a second copy. Config-flow imports remain lightweight and Bluetooth runtime code is loaded only after the config entry is set up.
 
 A Home Assistant custom integration for pvvx/ATC Telink thermometers such as **LYWSD03MMC**.
+
+## v0.3.18 isolate OTA transport and fix post-restart progress
+
+- separates Telink OTA handshake, BLE retries and block transfer from the central manager into `ota_transport.py`, without changing the OTA protocol;
+- keeps battery preflight, GATT serialization, target-version checks and verification in the manager;
+- fixes `OTA status: success` alongside `OTA progress: Unknown` after a restart by restoring the final terminal 100% state from the persisted successful result;
+- adds an [architecture overview](ARCHITECTURE.md) and regression checks around the new transport boundary;
+- **No change to firmware bytes, OTA pacing, supported thermometers, or Home Assistant entities.** This is the first controlled refactor step, not a complete rewrite.
 
 ## v0.3.17 allow explicit same-version OTA reinstall for progress testing
 
