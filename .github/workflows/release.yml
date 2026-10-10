@@ -1,18 +1,25 @@
 name: Publish HACS release
 
+# Only an explicitly approved, hardware-tested build should become stable.
+# Merging a version bump into main must never publish an untested release.
 on:
-  push:
-    branches: [main]
-    paths:
-      - custom_components/atc_ota/manifest.json
-      - .github/workflows/release.yml
   workflow_dispatch:
+    inputs:
+      hardware_tested:
+        description: "Confirm that the OTA transfer and post-OTA firmware verification passed on physical hardware"
+        required: true
+        type: choice
+        options:
+          - "no"
+          - "yes"
+        default: "no"
 
 permissions:
   contents: write
 
 jobs:
   publish:
+    if: ${{ github.ref == 'refs/heads/main' && inputs.hardware_tested == 'yes' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
