@@ -397,6 +397,12 @@ class AtcManager(OtaTransportMixin):
             state.name = device.name
             if not state.model:
                 state.model = "LYWSD03MMC"
+            if device.battery is None and state.battery_source != "gatt":
+                # A missing native BTHome battery entity means there is no
+                # authoritative displayed value, even if 0.3 persisted one.
+                state.battery = None
+                state.battery_last_seen = None
+                state.battery_source = "bthome_entity"
             if device.battery is not None:
                 # Never create a safety-freshness timestamp from a HA entity
                 # last_updated/last_changed, which can reflect cached state.
@@ -1364,8 +1370,10 @@ class AtcManager(OtaTransportMixin):
             await self._async_save()
 
     async def async_user_refresh_device(self, address: str) -> None:
-        """Run an explicit user-requested metadata refresh immediately."""
+        """Refresh only when no OTA owns the shared GATT radio session."""
         address = address.upper()
+        if self._ota_lock.locked() or self._installing_addresses or self._pending_install_addresses:
+            raise HomeAssistantError("OTA is running; retry Refresh firmware info after it finishes")
         self._last_metadata_attempt[address] = 0.0
         await self.async_refresh_device(address, origin="manual")
 
