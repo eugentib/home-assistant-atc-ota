@@ -2,12 +2,20 @@
 
 import ast
 import asyncio
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
 
 SOURCE = Path(__file__).parents[1] / "custom_components" / "atc_ota" / "diagnostics.py"
+
+
+@dataclass
+class FakeBTHomeThermometer:
+    address: str
+    name: str
+    battery: int | None
+    battery_entity_id: str | None
 
 
 def _diagnostics_function(probe):
@@ -36,7 +44,7 @@ def _entry():
 
 
 def test_bthome_diagnostics_shows_native_level_without_mutating_manager():
-    bthome = SimpleNamespace(
+    bthome = FakeBTHomeThermometer(
         address="A4:C1:38:67:AA:41",
         name="Pool",
         battery=67,
@@ -57,6 +65,7 @@ def test_bthome_diagnostics_shows_native_level_without_mutating_manager():
 def test_bthome_diagnostics_failure_does_not_break_existing_diagnostics():
     def fail(_hass):
         raise RuntimeError("BTHome not ready")
+
     result = asyncio.run(_diagnostics_function(fail)(object(), _entry()))
     assert result["devices"] == {}
     assert result["bthome_inventory_v04_prototype"] == {
