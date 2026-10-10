@@ -23,6 +23,7 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
 
 from .bthome import parse_bthome_v2
+from .bthome_inventory import configured_lywsd03mmc
 from .const import (
     BTHOME_UUID,
     CATALOG_REFRESH_SECONDS,
@@ -316,24 +317,12 @@ class AtcManager(OtaTransportMixin):
             except (TypeError, ValueError):
                 _LOGGER.warning("Ignoring invalid stored ATC OTA device %s", address)
 
+        # v0.4: only thermometers explicitly configured by the user in
+        # Home Assistant's native BTHome integration are eligible for ATC OTA.
+        # BTHome already decodes the advertisements and owns the battery sensor.
+        self._sync_bthome_inventory(prune=True)
         self._refresh_home_assistant_names()
 
-        self._unsubs.extend(
-            [
-                bluetooth.async_register_callback(
-                    self.hass,
-                    self._async_bluetooth_event,
-                    {"service_data_uuid": BTHOME_UUID, "connectable": False},
-                    bluetooth.BluetoothScanningMode.PASSIVE,
-                ),
-                bluetooth.async_register_callback(
-                    self.hass,
-                    self._async_bluetooth_event,
-                    {"service_data_uuid": ENV_SENSING_UUID, "connectable": False},
-                    bluetooth.BluetoothScanningMode.PASSIVE,
-                ),
-            ]
-        )
         self._unsubs.append(
             async_track_time_interval(
                 self.hass,
@@ -344,11 +333,13 @@ class AtcManager(OtaTransportMixin):
         self._unsubs.append(
             async_track_time_interval(
                 self.hass,
-                self._async_ble_health_timer,
-                timedelta(seconds=30),
+                self._async_bthome_inventory_timer,
+                timedelta(seconds=20),
             )
         )
-
+        # No passive BT callbacks, no second BTHome parser at runtime, no
+        # background metadata GATT probes. GATT is requested by Refresh or OTA.
+        
         self._unsubs.append(
             self.entry.add_update_listener(self._async_options_updated)
         )
@@ -378,6 +369,60 @@ class AtcManager(OtaTransportMixin):
         if self._save_task is not None:
             self._save_task.cancel()
             self._save_task = None
+
+    def _sync_bthome_inventory(self, *, prune: bool = False) -> None:
+        """Mirror configured BTHome devices without opening a Bluetooth connection.
+
+        Native BTHome state is used for display; it is never trusted as a
+        *fresh* battery measurement when authorizing a firmware write. OTA
+        preflight obtains a fresh standard GATT Battery Level measurement.
+        """
+        try:
+            snapshots = configured_lywsd03mmc(self.hass)
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning("Unable to read BTHome inventory: %s", exc)
+            return
+
+        if prune:
+            # Only at startup, before entities have been created. Do not remove
+            # a live state that entities may still be referencing after setup.
+            self.devices = {
+                addr: state for addr, state in self.devices.items() if addr in snapshots
+            }
+
+        for address, device in snapshots.items():
+            new = address not in self.devices
+            state = self.devices.setdefault(address, DeviceState(address=address))
+            old = (state.name, state.battery, state.battery_source)
+            state.name = device.name
+            if not state.model:
+                state.model = "LYWSD03MMC"
+            if device.battery is not None:
+                # Never create a safety-freshness timestamp from a HA entity
+                # last_updated/last_changed, which can reflect cached state.
+                if state.battery != device.battery:
+                    state.battery = device.battery
+                    state.battery_last_seen = None
+                    state.battery_source = "bthome_entity"
+                elif state.battery_source != "gatt":
+                    state.battery_source = "bthome_entity"
+                    state.battery_last_seen = None
+            if new:
+                self._refresh_home_assistant_name(state)
+                async_dispatcher_send(
+                    self.hass,
+                    signal_device_added(self.entry.entry_id),
+                    address,
+                )
+                self._schedule_save()
+            if new or old != (state.name, state.battery, state.battery_source):
+                self._update_ota_readiness(state)
+                self._notify(address)
+
+    @callback
+    def _async_bthome_inventory_timer(self, _now) -> None:
+        """Refresh the small HA entity snapshot; no radio work is performed."""
+        self._sync_bthome_inventory()
 
     @callback
     def _async_catalog_timer(self, _now) -> None:
@@ -1499,44 +1544,29 @@ class AtcManager(OtaTransportMixin):
                 state.ota_message = "Checking battery"
                 self._notify(address)
 
-                battery_fresh = (
-                    state.battery is not None and self.battery_is_fresh(state)
-                )
-                if not battery_fresh:
-                    state.ota_message = "Scanning for a fresh battery reading"
-                    self._notify(address)
-                    try:
-                        await self.async_request_scan(float(OTA_BATTERY_SCAN_SECONDS))
-                    except Exception as exc:  # noqa: BLE001
-                        _LOGGER.debug("Pre-OTA battery scan failed: %s", exc)
-
-                battery_fresh = (
-                    state.battery is not None and self.battery_is_fresh(state)
-                )
-
-                if not battery_fresh:
-                    state.ota_message = "Reading battery over GATT"
-                    self._notify(address)
-                    try:
-                        await self.async_refresh_device(address)
-                    except Exception as exc:  # noqa: BLE001
-                        _LOGGER.debug("Pre-OTA GATT battery refresh failed: %s", exc)
-
-                    battery_fresh = (
-                        state.battery is not None and self.battery_is_fresh(state)
-                    )
-
-                if not battery_fresh:
+                # v0.4: BTHome is the only displayed battery source, but a
+                # cached Home Assistant entity does not prove that its value
+                # was physically sampled recently. Verify battery over GATT
+                # before sending any Telink OTA start command.
+                state.ota_message = "Verifying battery and firmware metadata over GATT"
+                self._notify(address)
+                try:
+                    await self.async_refresh_device(address, origin="ota-preflight")
+                except Exception as exc:
                     raise HomeAssistantError(
-                        "OTA refused because a recent battery level could not be obtained "
-                        "from BTHome or the Battery Level GATT characteristic."
+                        "OTA refused: could not verify battery/firmware over GATT. "
+                        "Move the thermometer closer to an active ESPHome proxy "
+                        "and use Refresh firmware info before retrying."
+                    ) from exc
+                if state.battery_source != "gatt" or not self.battery_is_fresh(state):
+                    raise HomeAssistantError(
+                        "OTA refused: no fresh Battery Level GATT reading; "
+                        "the BTHome entity alone is not sufficient for a safe OTA."
                     )
-
                 if state.battery < self.low_battery_threshold:
                     raise HomeAssistantError(
-                        f"OTA refused: battery is {state.battery}% and the configured minimum is "
-                        f"{self.low_battery_threshold}%. Change the ATC OTA option only if you "
-                        "intentionally want to accept the risk."
+                        f"OTA refused: battery {state.battery}% is below "
+                        f"{self.low_battery_threshold}%."
                     )
 
                 if not state.model or not state.hardware_revision or not state.current_version:
