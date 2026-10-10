@@ -41,17 +41,10 @@ class AtcOtaEntity(Entity):
 
     @property
     def device_info(self) -> DeviceInfo:
-        state = self.state_data
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.address)},
-            name=state.ha_name or state.name or f"ATC {self.address[-8:].replace(':', '')}",
-            manufacturer=state.manufacturer or "Xiaomi / pvvx",
-            model=state.model or "ATC/pvvx thermometer",
-            hw_version=state.hardware_revision,
-            sw_version=state.current_version,
-            suggested_area=state.ha_area,
-            configuration_url="https://github.com/pvvx/ATC_MiThermometer",
-        )
+        # v0.4 attaches OTA actions to the *existing* native BTHome device,
+        # rather than creating a second "ATC OTA" device for the same MAC.
+        # BTHome itself owns display name, area, manufacturer and sensors.
+        return DeviceInfo(identifiers={("bluetooth", self.address)})
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
