@@ -21,14 +21,7 @@ async def async_setup_entry(hass, entry, async_add_entities) -> None:
         known.add(address)
         async_add_entities(
             [
-                AtcBatterySensor(manager, address),
                 AtcFirmwareAvailabilitySensor(manager, address),
-                AtcRssiSensor(manager, address),
-                AtcGattRssiSensor(manager, address),
-                AtcBroadcastSourceSensor(manager, address),
-                AtcBleHealthSensor(manager, address),
-                AtcOtaRouteSensor(manager, address),
-                AtcLastOtaRouteSensor(manager, address),
                 AtcOtaProgressSensor(manager, address),
                 AtcOtaStatusSensor(manager, address),
                 AtcOtaReadinessSensor(manager, address),
