@@ -28,7 +28,7 @@ def evaluate_ota_readiness(
     if battery is None or not battery_fresh:
         return OtaReadiness(
             "waiting_for_battery",
-            "Waiting for a fresh battery advertisement",
+            "A fresh GATT battery verification is required before OTA; BTHome entity state alone is not authorization",
         )
     if battery < low_battery_threshold:
         return OtaReadiness(

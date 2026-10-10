@@ -102,18 +102,7 @@ class AtcOtaOptionsFlow(OptionsFlow):
                         CONF_LOW_BATTERY_THRESHOLD, DEFAULT_LOW_BATTERY_THRESHOLD
                     ),
                 ): vol.All(vol.Coerce(int), vol.Range(min=5, max=80)),
-                vol.Required(
-                    CONF_AUTO_PROBE_METADATA,
-                    default=options.get(
-                        CONF_AUTO_PROBE_METADATA, DEFAULT_AUTO_PROBE_METADATA
-                    ),
-                ): bool,
-                vol.Required(
-                    CONF_AUTO_PROBE_MIN_RSSI,
-                    default=options.get(
-                        CONF_AUTO_PROBE_MIN_RSSI, DEFAULT_AUTO_PROBE_MIN_RSSI
-                    ),
-                ): vol.All(vol.Coerce(int), vol.Range(min=-110, max=-30)),
+
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)
