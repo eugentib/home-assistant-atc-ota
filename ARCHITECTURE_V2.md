@@ -1,7 +1,8 @@
 # ATC OTA v0.4 — BTHome-first design (prototype)
 
-Status: **proposal / non-runtime prototype**. Neither v0.3.18 nor any deployed
-OTA behavior changes in this branch. Keep the v0.3.17/v0.3.18 rollback path.
+Status: **v0.4.0 implementation in progress**. BTHome inventory and native battery
+are now used by the runtime. GATT metadata and OTA remain in the established
+transport while the legacy manager is being decomposed in subsequent PRs.
 
 ## Scope
 
@@ -59,20 +60,20 @@ attributing timeouts to the OTA protocol.
 
 ## Safe migration stages
 
-1. **This PR:** independent, read-only BTHome inventory/battery mapping and
-   behavior tests; no manager changes, no OTA changes, no release.
-2. Add HA-facing integration tests for entity registry changes, disabled
-   battery sensors, startup ordering and incomplete BTHome data.
-3. Switch inventory/UI to configured BTHome devices and remove redundant
-   battery / advertisement parsing *only after* proving correct mapping.
-4. Introduce one GATT connection/session coordinator, eliminate automatic
-   background metadata GATT and competing refresh tasks.
-5. Move install orchestration into `ota_session.py`, keeping the
-   proven `ota_transport.py` packet transport unchanged.
-6. Reduce UI to Install, Refresh, Firmware, OTA status/progress, Readiness.
-   Keep verbose BLE details in downloadable diagnostics, not 8+ entities.
-7. Run physical same-version OTA and post-reboot GATT verification, compare
-   intermediate percentages with baseline, then manually publish a release.
+1. **v0.4.0:** runtime uses only configured native BTHome thermometers,
+   mirrors battery without another decoder, removes its duplicate battery
+   entity and all automatic BLE/GATT scans. OTA controls attach to BTHome
+   devices, with a fresh GATT Battery Level read before firmware transfer.
+2. Validate the new BTHome inventory, GATT preflight, and same-version OTA on
+   real ESPHome Bluetooth proxies.
+3. Remove unused legacy BTHome callback/metadata probe code, then decompose
+   the manager's metadata, connection and session services without changing
+   the Telink wire protocol.
+4. Keep verbose BLE diagnostics out of the default device UI.
+5. Introduce HA-level runtime tests for startup timing and entity changes.
+
+**Radio constraint:** A -90/-95 dBm advertisement is not a working GATT
+connection. The app does not promise to overcome a weak bidirectional link.
 
 **Gate:** each PR must pass real behavior tests; runtime changes additionally
 require hardware validation. No automatic stable HACS release from merging.
