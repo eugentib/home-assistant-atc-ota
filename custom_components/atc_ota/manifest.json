@@ -1,7 +1,7 @@
 {
   "domain": "atc_ota",
   "name": "ATC OTA",
-  "version": "0.3.18",
+  "version": "0.4.0",
   "config_flow": true,
   "dependencies": [
     "bluetooth",
@@ -27,5 +27,8 @@
     }
   ],
   "integration_type": "hub",
-  "single_config_entry": true
+  "single_config_entry": true,
+  "after_dependencies": [
+    "bthome"
+  ]
 }
