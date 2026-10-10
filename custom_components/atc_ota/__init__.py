@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant
 if TYPE_CHECKING:
     from .manager import AtcManager
 
-PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.UPDATE, Platform.BUTTON]
+PLATFORMS = [Platform.SENSOR, Platform.UPDATE, Platform.BUTTON]
 
 type AtcOtaConfigEntry = ConfigEntry["AtcManager"]
 
