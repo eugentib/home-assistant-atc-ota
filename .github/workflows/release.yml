@@ -1,0 +1,36 @@
+name: Publish HACS release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - custom_components/atc_ota/manifest.json
+      - .github/workflows/release.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get version
+        id: version
+        shell: bash
+        run: |
+          VERSION="$(python3 -c 'import json; print(json.load(open("custom_components/atc_ota/manifest.json"))["version"])')"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Publish release if missing
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists"
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" --title "$TAG" --generate-notes --latest
+          fi
