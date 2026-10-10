@@ -1,6 +1,6 @@
 """Read-only inventory adapter for already configured Home Assistant BTHome devices.
 
-This is an opt-in candidate for ATC OTA v0.4, NOT wired into v0.3 runtime.
+This is the v0.4 inventory source; ATC OTA never owns a BLE advertising scanner.
 Home Assistant BTHome owns decoding and entity state; we never decode its
 advertisements or create a second battery sensor here.
 """
